@@ -3,6 +3,7 @@ google_sign_in=/Users/vismaya/.pub-cache/hosted/pub.dev/google_sign_in-6.2.2/
 google_sign_in_android=/Users/vismaya/.pub-cache/hosted/pub.dev/google_sign_in_android-6.1.35/
 google_sign_in_ios=/Users/vismaya/.pub-cache/hosted/pub.dev/google_sign_in_ios-5.9.0/
 google_sign_in_web=/Users/vismaya/.pub-cache/hosted/pub.dev/google_sign_in_web-0.12.4+4/
+integration_test=/Users/vismaya/fvm/versions/3.24.5/packages/integration_test/
 path_provider=/Users/vismaya/.pub-cache/hosted/pub.dev/path_provider-2.1.5/
 path_provider_android=/Users/vismaya/.pub-cache/hosted/pub.dev/path_provider_android-2.2.15/
 path_provider_foundation=/Users/vismaya/.pub-cache/hosted/pub.dev/path_provider_foundation-2.4.1/
