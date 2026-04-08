@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:qhack_picnic/waren_korbscreen.dart';
 
 class FoodItem {
   const FoodItem({
@@ -128,7 +129,7 @@ class _PicnicShellState extends State<PicnicShell> {
       const _PlaceholderScreen(title: 'Favoriten'),
       const _PlaceholderScreen(title: 'Kochen'),
       const _PlaceholderScreen(title: 'Suchen'),
-      const _PlaceholderScreen(title: 'Warenkorb'),
+      const WarenKorbscreen(),
     ];
 
     return Scaffold(
@@ -844,7 +845,7 @@ class _GiftCard extends StatelessWidget {
   static const _backgroundImages = [
     'assets/foods/blue_icon.png',
     'assets/foods/pink_icon.png',
-    'assets/foods/yellow_iconexit.png',
+    'assets/foods/yellow_icon.png',
   ];
 
   @override
