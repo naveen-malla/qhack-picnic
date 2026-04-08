@@ -272,36 +272,35 @@ const foodCatalog = <FoodItem>[
     name: 'Sandwich Bread',
     description: '750g · demo',
     price: 2.49,
-    // Fallback until `sandwich_bread.jpg` exists (see Q-picnic database Sheet1).
-    assetPath: 'assets/foods/bread.jpg',
+    assetPath: 'assets/foods/sandwich_bread.jpg',
   ),
   FoodItem(
     id: 'pizza_dough',
     name: 'Pizza dough',
     description: 'Frisch · demo',
     price: 2.29,
-    assetPath: 'assets/foods/cordon_bleu.jpg',
+    assetPath: 'assets/foods/pizza_dough.jpg',
   ),
   FoodItem(
     id: 'mozzarella',
     name: 'Mozzarella',
     description: '125g · demo',
     price: 1.49,
-    assetPath: 'assets/foods/leer_dammer.jpg',
+    assetPath: 'assets/foods/mozarella.jpg',
   ),
   FoodItem(
     id: 'olive_oil',
     name: 'Olive oil',
     description: '500ml · demo',
     price: 4.99,
-    assetPath: 'assets/foods/tomaten.jpg',
+    assetPath: 'assets/foods/olive_oil.jpg',
   ),
   FoodItem(
     id: 'salami',
     name: 'Salami',
     description: '100g · sliced (demo)',
     price: 2.19,
-    assetPath: 'assets/foods/geflügel.jpg',
+    assetPath: 'assets/foods/salami.jpg',
   ),
 ];
 
@@ -832,7 +831,7 @@ class _FavoritenScreenState extends State<FavoritenScreen> {
   List<FoodItem> get _addableItems => [
         _get('cordon_bleu'),
         _get('gefluegel_mortadella'),
-        _get('Vollkorn-Brot'),
+        _get('sandwich_bread'),
         _get('ketchup'),
         _get('orange_juice'),
         _get('rice'),
