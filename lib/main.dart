@@ -16,6 +16,22 @@ class FoodItem {
   final String assetPath;
 }
 
+const reorderCatalog = <FoodItem>[
+  FoodItem(
+    id: 'leerdammer_original',
+    name: 'Leerdammer Original',
+    description: '140g · €20.64/kg',
+    price: 2.89,
+    assetPath: 'assets/foods/leer_dammer.jpg',
+  ),
+  FoodItem(
+    id: 'bio_tomaten_stueckig',
+    name: 'Bio Tomaten stückig',
+    description: 'Edeka Bio · 400g · €1.98/kg',
+    price: 0.79,
+    assetPath: 'assets/foods/tomaten.jpg',
+  ),
+];
 const foodCatalog = <FoodItem>[
   FoodItem(
     id: 'leerdammer_original',
@@ -58,6 +74,27 @@ const foodCatalog = <FoodItem>[
     description: 'Edeka Bio · 400g · €1.98/kg',
     price: 0.79,
     assetPath: 'assets/foods/tomaten.jpg',
+  ),
+  FoodItem(
+    id: 'ketchup',
+    name: 'Ketchup',
+    description: 'Heinz · 500ml · €5.98/L',
+    price: 2.99,
+    assetPath: 'assets/foods/ketchup.jpg',
+  ),
+  FoodItem(
+    id: 'orange_juice',
+    name: 'Orangensaft',
+    description: 'Frisch gepresst · 1L',
+    price: 1.89,
+    assetPath: 'assets/foods/orange_juice.jpg',
+  ),
+  FoodItem(
+    id: 'rice',
+    name: 'Basmati Reis',
+    description: 'Uncle Ben\'s · 500g · €3.98/kg',
+    price: 1.99,
+    assetPath: 'assets/foods/rice.jpg',
   ),
 ];
 
@@ -121,11 +158,13 @@ class PicnicShell extends StatefulWidget {
 class _PicnicShellState extends State<PicnicShell> {
   int _tabIndex = 0;
 
+  void _goToFavoriten() => setState(() => _tabIndex = 1);
+
   @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
-      const DiscoverScreen(),
-      const _PlaceholderScreen(title: 'Favoriten'),
+      DiscoverScreen(onGoToFavoriten: _goToFavoriten),
+      const FavoritenScreen(),
       const _PlaceholderScreen(title: 'Kochen'),
       const _PlaceholderScreen(title: 'Suchen'),
       const _PlaceholderScreen(title: 'Warenkorb'),
@@ -177,8 +216,259 @@ class _PlaceholderScreen extends StatelessWidget {
   }
 }
 
+class FavoritenScreen extends StatefulWidget {
+  const FavoritenScreen({super.key});
+
+  @override
+  State<FavoritenScreen> createState() => _FavoritenScreenState();
+}
+
+class _FavoritenScreenState extends State<FavoritenScreen> {
+  final List<bool> _added = [false, false, false, false, false, false];
+
+  FoodItem _get(String id) => foodCatalog.firstWhere((e) => e.id == id);
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    final preSelected = [
+      _get('leerdammer_original'),
+      _get('salatgurke'),
+      _get('bio_tomaten_stueckig'),
+    ];
+
+    final addable = [
+      _get('cordon_bleu'),
+      _get('gefluegel_mortadella'),
+      _get('Vollkorn-Brot'),
+      _get('ketchup'),
+      _get('orange_juice'),
+      _get('rice'),
+    ];
+
+    return ListView(
+      padding: const EdgeInsets.fromLTRB(12, 16, 12, 24),
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Text(
+            'Bestellen Sie wieder',
+            style: theme.textTheme.titleLarge,
+          ),
+        ),
+        const SizedBox(height: 30),
+        // Row 1 – pre-selected items
+        IntrinsicHeight(
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: preSelected
+                .map(
+                  (item) => Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: _FavoritenCard(
+                        item: item,
+                        isPreSelected: true,
+                        isAdded: false,
+                      ),
+                    ),
+                  ),
+                )
+                .toList(),
+          ),
+        ),
+        const SizedBox(height: 25),
+        // Add-to-cart button (right-aligned)
+        Align(
+          alignment: Alignment.centerRight,
+          child: Padding(
+            padding: const EdgeInsets.only(right: 4),
+            child: FilledButton(
+              onPressed: () {},
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFFE53935),
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 11,
+                  vertical: 12,
+                ),
+              ),
+              child: const Text(
+                'Zum Warenkorb hinzufügen',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 45),
+        Padding(
+          padding: const EdgeInsets.only(left: 4, bottom: 10),
+          child: Text(
+            'Vorschläge für Sie',
+            style: Theme.of(context).textTheme.titleMedium,
+          ),
+        ),
+        // Rows 2 & 3 – addable items (3 per row)
+        for (int row = 0; row < (addable.length / 3).ceil(); row++) ...[
+          if (row > 0) const SizedBox(height: 12),
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: List.generate(3, (col) {
+                final i = row * 3 + col;
+                if (i >= addable.length)
+                  return const Expanded(child: SizedBox());
+                return Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 4),
+                    child: _FavoritenCard(
+                      item: addable[i],
+                      isPreSelected: false,
+                      isAdded: _added[i],
+                      onAdd: () => setState(() => _added[i] = !_added[i]),
+                    ),
+                  ),
+                );
+              }),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
+class _FavoritenCard extends StatelessWidget {
+  const _FavoritenCard({
+    required this.item,
+    required this.isPreSelected,
+    required this.isAdded,
+    this.onAdd,
+  });
+
+  final FoodItem item;
+  final bool isPreSelected;
+  final bool isAdded;
+  final VoidCallback? onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // Square image area — AspectRatio ensures all cards same height
+        AspectRatio(
+          aspectRatio: 1,
+          child: Container(
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(14),
+              border: isPreSelected
+                  ? Border.all(
+                      color: const Color(0xFFE53935).withValues(alpha: 0.35),
+                      width: 2,
+                    )
+                  : null,
+            ),
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(12),
+              child: Stack(
+                fit: StackFit.expand,
+                children: [
+                  Container(color: const Color(0xFFF4F4F4)),
+                  Padding(
+                    padding: const EdgeInsets.all(10),
+                    child: Image.asset(
+                      item.assetPath,
+                      fit: BoxFit.fill,
+                      errorBuilder: (_, __, ___) => const Icon(
+                        Icons.image_outlined,
+                        color: Color(0xFFBBBBBB),
+                      ),
+                    ),
+                  ),
+                  Positioned(
+                    right: 6,
+                    bottom: 6,
+                    child: isPreSelected
+                        ? Container(
+                            width: 26,
+                            height: 26,
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE53935),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: const Icon(
+                              Icons.check,
+                              color: Colors.white,
+                              size: 16,
+                            ),
+                          )
+                        : GestureDetector(
+                            onTap: onAdd,
+                            child: Container(
+                              width: 26,
+                              height: 26,
+                              decoration: BoxDecoration(
+                                color: isAdded
+                                    ? const Color(0xFFE53935)
+                                    : Colors.white,
+                                borderRadius: BorderRadius.circular(8),
+                                boxShadow: [
+                                  BoxShadow(
+                                    color: Colors.black.withValues(alpha: 0.10),
+                                    blurRadius: 4,
+                                  ),
+                                ],
+                              ),
+                              child: Icon(
+                                isAdded ? Icons.check : Icons.add,
+                                size: 16,
+                                color: isAdded
+                                    ? Colors.white
+                                    : const Color(0xFF333333),
+                              ),
+                            ),
+                          ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 5),
+        Text(
+          item.name,
+          style: theme.textTheme.bodySmall?.copyWith(
+            fontWeight: FontWeight.w600,
+            fontSize: 11,
+            color: const Color(0xFF1A1A1A),
+          ),
+          maxLines: 2,
+          overflow: TextOverflow.ellipsis,
+        ),
+        const SizedBox(height: 2),
+        Text(
+          '€${item.price.toStringAsFixed(2)}',
+          style: const TextStyle(
+            color: Color(0xFFE53935),
+            fontWeight: FontWeight.w700,
+            fontSize: 12,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 class DiscoverScreen extends StatelessWidget {
-  const DiscoverScreen({super.key});
+  const DiscoverScreen({super.key, this.onGoToFavoriten});
+
+  final VoidCallback? onGoToFavoriten;
 
   @override
   Widget build(BuildContext context) {
@@ -298,9 +588,12 @@ class DiscoverScreen extends StatelessWidget {
             child: Row(
               children: [
                 Expanded(
-                  child: Text(
-                    'Entdecke unser Sortiment ›',
-                    style: theme.textTheme.titleMedium,
+                  child: InkWell(
+                    onTap: onGoToFavoriten,
+                    child: Text(
+                      'Bestellen Sie wieder ›',
+                      style: theme.textTheme.titleMedium,
+                    ),
                   ),
                 ),
               ],
@@ -321,9 +614,9 @@ class DiscoverScreen extends StatelessWidget {
               crossAxisSpacing: 12,
               childAspectRatio: 0.78,
             ),
-            itemCount: foodCatalog.length,
+            itemCount: reorderCatalog.length,
             itemBuilder: (context, idx) {
-              final item = foodCatalog[idx];
+              final item = reorderCatalog[idx];
               final bgColors = [
                 const Color(0xFFE7EEDD),
                 const Color(0xFFF1E1E1),
