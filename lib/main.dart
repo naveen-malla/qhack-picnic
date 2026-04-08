@@ -1,4 +1,184 @@
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:record/record.dart';
+import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
+
+final wishlistStore = WishlistStore();
+final uiRecording = ValueNotifier<bool>(false);
+
+FoodItem? catalogById(String id) {
+  for (final item in foodCatalog) {
+    if (item.id == id) return item;
+  }
+  return null;
+}
+
+String _formatEuro(double v) {
+  // Simple German-ish formatting (no intl dependency).
+  return v.toStringAsFixed(2).replaceAll('.', ',');
+}
+
+String _normalizeItemName(String s) {
+  final t = s.trim().toLowerCase();
+  if (t.isEmpty) return '';
+  return t.replaceAll(RegExp(r'\s+'), '_');
+}
+
+FoodItem? mapToCatalog(String normalized) {
+  final n = normalized.trim().toLowerCase();
+  final alias = <String, String>{
+    // Original requested ids
+    'leer_dammer': 'leerdammer_original',
+    'leerdammer': 'leerdammer_original',
+    'sandwich_bread': 'sandwich_bread',
+    'salatgurke': 'salatgurke',
+    'salami': 'salami',
+    'sauce': 'sauce',
+
+    // Model normalizations (Gemini often returns English)
+    'cucumber': 'salatgurke',
+    'bio_tomaten_stueckig': 'bio_tomaten_stueckig',
+    'tomatoes': 'bio_tomaten_stueckig',
+    'tomato': 'bio_tomaten_stueckig',
+    'leerdammer_cheese': 'leerdammer_original',
+    'leerdammer_cheese.': 'leerdammer_original',
+    'leerdammer_cheese,': 'leerdammer_original',
+    'leerdammer_cheese': 'leerdammer_original',
+    'sandwich_bread.': 'sandwich_bread',
+    'sandwich_bread,': 'sandwich_bread',
+    'sandwich_bread': 'sandwich_bread',
+  };
+
+  final mappedId = alias[n];
+  if (mappedId != null) return catalogById(mappedId);
+
+  for (final item in foodCatalog) {
+    final name = item.name.toLowerCase().replaceAll(' ', '_');
+    if (name.contains(n) || n.contains(name)) return item;
+  }
+  return null;
+}
+
+class WishlistStore extends ChangeNotifier {
+  static const apiBase = 'http://127.0.0.1:5001';
+  static const apiKey = String.fromEnvironment('WISHLIST_API_KEY', defaultValue: 'dev-token');
+
+  final Map<String, int> qtyById = {};
+  Timer? _pollTimer;
+  bool _polling = false;
+  bool _busy = false;
+
+  void startPolling() {
+    if (_polling) return;
+    _polling = true;
+    _pollTimer = Timer.periodic(const Duration(seconds: 2), (_) => _pollOnce());
+    Future<void>.delayed(Duration.zero, _pollOnce);
+  }
+
+  void stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+    _polling = false;
+  }
+
+  void clear() {
+    qtyById.clear();
+    notifyListeners();
+  }
+
+  double get totalCost {
+    var total = 0.0;
+    for (final e in qtyById.entries) {
+      final item = catalogById(e.key);
+      if (item == null) continue;
+      total += item.price * e.value;
+    }
+    return total;
+  }
+
+  void setQty(String id, int qty) {
+    final next = qty.clamp(0, 9999);
+    if (next <= 0) {
+      if (qtyById.remove(id) != null) notifyListeners();
+      return;
+    }
+    if (qtyById[id] == next) return;
+    qtyById[id] = next;
+    notifyListeners();
+  }
+
+  void inc(String id, {int by = 1}) {
+    setQty(id, (qtyById[id] ?? 0) + (by <= 0 ? 1 : by));
+  }
+
+  void dec(String id, {int by = 1}) {
+    setQty(id, (qtyById[id] ?? 0) - (by <= 0 ? 1 : by));
+  }
+
+  void addItemsFromExtracted(Map<String, dynamic> extracted) {
+    final items = (extracted['items'] as List?) ?? const [];
+    var changed = false;
+    for (final it in items) {
+      final m = (it as Map?)?.cast<String, dynamic>();
+      final rawName = (m?['name'] ?? '').toString();
+      final norm = _normalizeItemName(rawName);
+      if (norm.isEmpty) continue;
+      final catalogItem = mapToCatalog(norm);
+      if (catalogItem == null) continue;
+      final q = m?['quantity'];
+      final qty = q is num ? q.toInt() : 1;
+      final add = qty <= 0 ? 1 : qty;
+      qtyById[catalogItem.id] = (qtyById[catalogItem.id] ?? 0) + add;
+      changed = true;
+    }
+    if (changed) notifyListeners();
+  }
+
+  Future<void> _pollOnce() async {
+    if (_busy) return;
+    _busy = true;
+    try {
+      while (true) {
+        final nextUri = Uri.parse('$apiBase/api/wishlist/next').replace(queryParameters: {'api_key': apiKey});
+        final nextResp = await http.get(nextUri);
+        if (nextResp.statusCode == 204) return;
+        if (nextResp.statusCode != 200) return;
+
+        final payload = jsonDecode(nextResp.body) as Map<String, dynamic>;
+        final wishlistId = (payload['id'] ?? '').toString();
+        final from = (payload['from'] ?? '').toString();
+        final extracted = (payload['extracted'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+
+        addItemsFromExtracted(extracted);
+
+        if (wishlistId.isEmpty || from.isEmpty) continue;
+        final normalizedNames = <String>[];
+        final items = (extracted['items'] as List?) ?? const [];
+        for (final it in items) {
+          final m = (it as Map?)?.cast<String, dynamic>();
+          final rawName = (m?['name'] ?? '').toString();
+          final norm = _normalizeItemName(rawName);
+          if (norm.isNotEmpty) normalizedNames.add(norm);
+        }
+
+        final confirmUri = Uri.parse('$apiBase/api/wishlist/confirm').replace(queryParameters: {'api_key': apiKey});
+        await http.post(
+          confirmUri,
+          headers: const {'Content-Type': 'application/json'},
+          body: jsonEncode({'id': wishlistId, 'from': from, 'items': normalizedNames}),
+        );
+      }
+    } catch (_) {
+      return;
+    } finally {
+      _busy = false;
+    }
+  }
+}
 
 class FoodItem {
   const FoodItem({
@@ -46,11 +226,25 @@ const foodCatalog = <FoodItem>[
     assetPath: 'assets/foods/geflügel.jpg',
   ),
   FoodItem(
-    id: 'Vollkorn-Brot',
-    name: 'Vollkorn-Brot',
+    id: 'salami',
+    name: 'Salami',
+    description: '100g · sliced (demo)',
+    price: 2.19,
+    assetPath: 'assets/foods/geflügel.jpg',
+  ),
+  FoodItem(
+    id: 'sandwich_bread',
+    name: 'Sandwich Bread',
     description: 'Brot · 750g · €3.32/kg',
     price: 2.49,
     assetPath: 'assets/foods/bread.jpg',
+  ),
+  FoodItem(
+    id: 'sauce',
+    name: 'Sauce',
+    description: 'Condiment (demo)',
+    price: 1.49,
+    assetPath: 'assets/foods/tomaten.jpg',
   ),
   FoodItem(
     id: 'bio_tomaten_stueckig',
@@ -62,6 +256,7 @@ const foodCatalog = <FoodItem>[
 ];
 
 void main() {
+  wishlistStore.startPolling();
   final startOnSmartBasket = Uri.base.queryParameters['smartBasket'] == '1';
   runApp(MyApp(startOnSmartBasket: startOnSmartBasket));
 }
@@ -122,44 +317,122 @@ class _PicnicShellState extends State<PicnicShell> {
   int _tabIndex = 0;
 
   @override
+  void initState() {
+    super.initState();
+    wishlistStore.addListener(_onWishlistChanged);
+  }
+
+  @override
+  void dispose() {
+    wishlistStore.removeListener(_onWishlistChanged);
+    super.dispose();
+  }
+
+  void _onWishlistChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   Widget build(BuildContext context) {
     final pages = <Widget>[
       const DiscoverScreen(),
       const _PlaceholderScreen(title: 'Favoriten'),
       const _PlaceholderScreen(title: 'Kochen'),
       const _PlaceholderScreen(title: 'Suchen'),
-      const _PlaceholderScreen(title: 'Warenkorb'),
+      const BasketWishlistScreen(),
     ];
 
     return Scaffold(
-      body: SafeArea(child: pages[_tabIndex]),
+      body: Stack(
+        children: [
+          SafeArea(child: pages[_tabIndex]),
+          ValueListenableBuilder<bool>(
+            valueListenable: uiRecording,
+            builder: (context, isRec, _) {
+              if (!isRec) return const SizedBox.shrink();
+              return Positioned.fill(
+                child: IgnorePointer(
+                  child: Container(
+                    // Extreme top-to-bottom overlay (above SafeArea).
+                    color: const Color(0xFFFFF3B0).withOpacity(0.18),
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabIndex,
         onDestinationSelected: (i) => setState(() => _tabIndex = i),
-        destinations: const [
-          NavigationDestination(
+        destinations: [
+          const NavigationDestination(
             icon: Icon(Icons.storefront_outlined),
             selectedIcon: Icon(Icons.storefront),
             label: 'Entdecken',
           ),
-          NavigationDestination(
+          const NavigationDestination(
             icon: Icon(Icons.favorite_border),
             selectedIcon: Icon(Icons.favorite),
             label: 'Favoriten',
           ),
-          NavigationDestination(
+          const NavigationDestination(
             icon: Icon(Icons.restaurant_menu_outlined),
             selectedIcon: Icon(Icons.restaurant_menu),
             label: 'Kochen',
           ),
-          NavigationDestination(icon: Icon(Icons.search), label: 'Suchen'),
+          const NavigationDestination(icon: Icon(Icons.search), label: 'Suchen'),
           NavigationDestination(
-            icon: Icon(Icons.shopping_basket_outlined),
-            selectedIcon: Icon(Icons.shopping_basket),
+            icon: _CartNavIcon(
+              outlined: true,
+              totalCost: wishlistStore.totalCost,
+            ),
+            selectedIcon: _CartNavIcon(
+              outlined: false,
+              totalCost: wishlistStore.totalCost,
+            ),
             label: 'Warenkorb',
           ),
         ],
       ),
+    );
+  }
+}
+
+class _CartNavIcon extends StatelessWidget {
+  const _CartNavIcon({required this.outlined, required this.totalCost});
+
+  final bool outlined;
+  final double totalCost;
+
+  @override
+  Widget build(BuildContext context) {
+    final show = totalCost > 0.001;
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Icon(outlined ? Icons.shopping_basket_outlined : Icons.shopping_basket),
+        if (show)
+          Positioned(
+            right: -14,
+            top: -8,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: const Color(0xFFE53935),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                _formatEuro(totalCost),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ),
+          ),
+      ],
     );
   }
 }
@@ -177,17 +450,379 @@ class _PlaceholderScreen extends StatelessWidget {
   }
 }
 
-class DiscoverScreen extends StatelessWidget {
+class BasketWishlistScreen extends StatefulWidget {
+  const BasketWishlistScreen({super.key});
+
+  @override
+  State<BasketWishlistScreen> createState() => _BasketWishlistScreenState();
+}
+
+class _BasketWishlistScreenState extends State<BasketWishlistScreen> {
+  @override
+  void initState() {
+    super.initState();
+    wishlistStore.addListener(_onStoreChange);
+  }
+
+  @override
+  void dispose() {
+    wishlistStore.removeListener(_onStoreChange);
+    super.dispose();
+  }
+
+  void _onStoreChange() {
+    if (mounted) setState(() {});
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = wishlistStore.qtyById.entries.toList()
+      ..sort((a, b) => a.key.compareTo(b.key));
+    final total = entries.fold<double>(0.0, (sum, e) {
+      final item = catalogById(e.key);
+      if (item == null) return sum;
+      return sum + item.price * e.value;
+    });
+    final bottomInset = MediaQuery.of(context).padding.bottom;
+
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 10),
+          child: Container(
+            height: 42,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            padding: const EdgeInsets.symmetric(horizontal: 12),
+            child: Row(
+              children: [
+                const Icon(Icons.local_shipping_outlined, size: 18),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Center(
+                    child: Text(
+                      'Morgen 17:25 - 19:15',
+                      style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF5B534E),
+                      ),
+                    ),
+                  ),
+                ),
+                IconButton(
+                  onPressed: () {},
+                  icon: const Icon(Icons.more_horiz),
+                  splashRadius: 18,
+                ),
+              ],
+            ),
+          ),
+        ),
+        Expanded(
+          child: ListView(
+            padding: const EdgeInsets.fromLTRB(0, 0, 0, 8),
+            children: [
+              if (entries.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.fromLTRB(16, 12, 16, 12),
+                  child: Text('Noch keine Artikel im Warenkorb.'),
+                )
+              else ...[
+                ...entries.map((e) {
+                  final item = catalogById(e.key);
+                  if (item == null) return const SizedBox.shrink();
+                  final qty = e.value;
+                  final lineTotal = item.price * qty;
+
+                  return Container(
+                    color: Colors.white,
+                    padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+                    child: Row(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        _QtyPill(qty: qty),
+                        const SizedBox(width: 10),
+                        ClipRRect(
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            width: 44,
+                            height: 44,
+                            color: const Color(0xFFF0E8DD),
+                            child: Image.asset(item.assetPath, fit: BoxFit.cover),
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                item.name,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF2E2A27),
+                                ),
+                              ),
+                              const SizedBox(height: 2),
+                              Text(
+                                item.description,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w500,
+                                  color: Color(0xFF7A716B),
+                                  fontSize: 12,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(width: 10),
+                        Text(
+                          _formatEuro(lineTotal),
+                          style: const TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF2E2A27),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        _QtyStepper(
+                          onDecrement: () => wishlistStore.dec(item.id),
+                          onIncrement: () => wishlistStore.inc(item.id),
+                        ),
+                      ],
+                    ),
+                  );
+                }),
+                Container(
+                  color: Colors.white,
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 14),
+                  child: Row(
+                    children: const [
+                      Expanded(
+                        child: Text(
+                          'Produkte als eigenes Rezept speichern  ›',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF2E2A27),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        SafeArea(
+          top: false,
+          minimum: EdgeInsets.fromLTRB(16, 0, 16, 12 + bottomInset * 0),
+          child: SizedBox(
+            height: 54,
+            child: Row(
+              children: [
+                Expanded(
+                  child: ElevatedButton(
+                    onPressed: entries.isEmpty ? null : () {},
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: const Color(0xFFE53935),
+                      foregroundColor: Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12),
+                      ),
+                      padding: const EdgeInsets.symmetric(vertical: 14),
+                    ),
+                    child: const Text(
+                      'Zur Kasse',
+                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 12),
+                Container(
+                  width: 86,
+                  height: 54,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFE53935),
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  child: Text(
+                    '€ ${_formatEuro(total)}',
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w800,
+                      color: Colors.white,
+                      fontSize: 16,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _QtyPill extends StatelessWidget {
+  const _QtyPill({required this.qty});
+
+  final int qty;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 28,
+      height: 28,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF2EFEB),
+        borderRadius: BorderRadius.circular(999),
+      ),
+      child: Text(
+        '$qty',
+        style: const TextStyle(
+          fontWeight: FontWeight.w700,
+          color: Color(0xFF3A342F),
+        ),
+      ),
+    );
+  }
+}
+
+class _QtyStepper extends StatelessWidget {
+  const _QtyStepper({required this.onDecrement, required this.onIncrement});
+
+  final VoidCallback onDecrement;
+  final VoidCallback onIncrement;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 36,
+      height: 44,
+      decoration: BoxDecoration(
+        color: const Color(0xFFF2EFEB),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        children: [
+          Expanded(
+            child: InkWell(
+              onTap: onIncrement,
+              child: const Center(child: Icon(Icons.add, size: 18)),
+            ),
+          ),
+          Container(height: 1, color: Colors.white.withOpacity(0.8)),
+          Expanded(
+            child: InkWell(
+              onTap: onDecrement,
+              child: const Center(child: Icon(Icons.remove, size: 18)),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({super.key});
+
+  @override
+  State<DiscoverScreen> createState() => _DiscoverScreenState();
+}
+
+class _DiscoverScreenState extends State<DiscoverScreen>
+    with SingleTickerProviderStateMixin {
+  bool _isRecording = false;
+  final _recorder = AudioRecorder();
+  late final AnimationController _listenAnim;
+
+  @override
+  void initState() {
+    super.initState();
+    _listenAnim = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1400),
+    );
+  }
+
+  @override
+  void dispose() {
+    _listenAnim.dispose();
+    _recorder.dispose();
+    super.dispose();
+  }
+
+  Future<void> _toggleRecord() async {
+    try {
+      final hasPerm = await _recorder.hasPermission();
+      if (!hasPerm) return;
+
+      if (_isRecording) {
+        final path = await _recorder.stop();
+        _listenAnim.stop();
+        setState(() => _isRecording = false);
+        uiRecording.value = false;
+        if (path == null || path.isEmpty) return;
+        final bytes = await File(path).readAsBytes();
+        await _uploadAndApplyVoice(bytes, mimeType: 'audio/m4a');
+        return;
+      }
+
+      final dir = await getTemporaryDirectory();
+      final outPath = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      await _recorder.start(
+        const RecordConfig(encoder: AudioEncoder.aacLc, numChannels: 1),
+        path: outPath,
+      );
+      _listenAnim.repeat();
+      setState(() => _isRecording = true);
+      uiRecording.value = true;
+    } catch (_) {
+      if (mounted) setState(() => _isRecording = false);
+      uiRecording.value = false;
+    }
+  }
+
+  Future<void> _uploadAndApplyVoice(List<int> audioBytes, {required String mimeType}) async {
+    try {
+      final uri = Uri.parse('${WishlistStore.apiBase}/api/voice/ingest')
+          .replace(queryParameters: {'api_key': WishlistStore.apiKey});
+      final req = http.MultipartRequest('POST', uri);
+      req.fields['mime_type'] = mimeType;
+      req.fields['from'] = 'simulator-voice';
+      req.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          audioBytes,
+          filename: 'voice.m4a',
+          contentType: MediaType.parse(mimeType),
+        ),
+      );
+      final resp = await req.send();
+      final body = await resp.stream.bytesToString();
+      if (resp.statusCode != 200) return;
+      final data = jsonDecode(body) as Map<String, dynamic>;
+      final extracted = (data['extracted'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+      wishlistStore.addItemsFromExtracted(extracted);
+    } catch (_) {
+      return;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final size = MediaQuery.of(context).size;
     final horizontalPadding = size.width >= 420 ? 20.0 : 16.0;
-
-    return CustomScrollView(
-      slivers: [
+    return Stack(
+      children: [
+        CustomScrollView(
+          slivers: [
         SliverPadding(
           padding: EdgeInsets.fromLTRB(
             horizontalPadding,
@@ -206,6 +841,11 @@ class DiscoverScreen extends StatelessWidget {
                       fontWeight: FontWeight.w700,
                     ),
                   ),
+                ),
+                IconButton(
+                  onPressed: _toggleRecord,
+                  icon: Icon(_isRecording ? Icons.stop_circle : Icons.graphic_eq),
+                  tooltip: _isRecording ? 'Stop recording' : 'Voice input',
                 ),
                 IconButton(
                   onPressed: () {},
@@ -281,7 +921,7 @@ class DiscoverScreen extends StatelessWidget {
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
                 itemCount: 3,
-                separatorBuilder: (_, _) => const SizedBox(width: 10),
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
                 itemBuilder: (context, i) => _GiftCard(index: i + 1),
               ),
             ),
@@ -348,7 +988,61 @@ class DiscoverScreen extends StatelessWidget {
             },
           ),
         ),
+          ],
+        ),
+        // Full-screen overlay is handled by `PicnicShell` so it can cover
+        // the entire phone area beyond SafeArea.
       ],
+    );
+  }
+}
+
+class _ListeningOverlay extends StatelessWidget {
+  const _ListeningOverlay({required this.animation});
+
+  final Animation<double> animation;
+
+  @override
+  Widget build(BuildContext context) {
+    return AnimatedBuilder(
+      animation: animation,
+      builder: (context, _) {
+        final t = animation.value;
+        final pulse = 0.35 + 0.35 * (0.5 + 0.5 * (1 - (2 * (t - 0.5)).abs()));
+        final width = 3.5 + 2.5 * pulse;
+        final glow = 6.0 + 14.0 * pulse;
+        // Soft “recording” wash across the whole screen.
+        final tint = 0.10 + 0.12 * pulse;
+        final wash = Color.lerp(const Color(0xFFFFFFFF), const Color(0xFFFFF3B0), 0.65)!;
+
+        return Container(
+          decoration: BoxDecoration(
+            // Full-screen highlight while recording (not a rounded box).
+            color: wash.withOpacity(tint),
+            border: Border.all(
+              color: Color.lerp(
+                    const Color(0xFFE53935),
+                    const Color(0xFF3E7D2A),
+                    t,
+                  )!
+                  .withOpacity(0.85),
+              width: width,
+            ),
+            boxShadow: [
+              BoxShadow(
+                color: const Color(0xFFE53935).withOpacity(0.10 + 0.25 * pulse),
+                blurRadius: glow,
+                spreadRadius: 2,
+              ),
+              BoxShadow(
+                color: const Color(0xFF3E7D2A).withOpacity(0.08 + 0.22 * (1 - pulse)),
+                blurRadius: glow,
+                spreadRadius: 1,
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -762,74 +1456,112 @@ class _WelcomeCard extends StatelessWidget {
     final theme = Theme.of(context);
     return ClipRRect(
       borderRadius: BorderRadius.circular(16),
-      child: Container(
-        color: Colors.white,
-        padding: const EdgeInsets.all(14),
-        child: Row(
-          children: [
-            Expanded(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Text(
-                    'Bereit für deine 1. Bestellung?',
-                    style: theme.textTheme.titleMedium,
-                  ),
-                  const SizedBox(height: 10),
-                  Wrap(
-                    spacing: 10,
-                    runSpacing: 10,
+      child: Material(
+        color: const Color(0xFFF9E7E8),
+        child: InkWell(
+          onTap: onSmartBasket,
+          child: SizedBox(
+            height: 132,
+            child: Stack(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(14, 14, 44, 14),
+                  child: Row(
                     children: [
-                      FilledButton(
-                        onPressed: () {},
-                        style: FilledButton.styleFrom(
-                          backgroundColor: const Color(0xFFE53935),
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 10,
-                          ),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            FilledButton(
+                              onPressed: () {},
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFFE53935),
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                ),
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 14,
+                                  vertical: 10,
+                                ),
+                                minimumSize: const Size(0, 0),
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
+                              child: const Text('Willkommen ♥'),
+                            ),
+                            const SizedBox(height: 10),
+                            Text(
+                              '20 € für deinen\nStart bei Picnic',
+                              style: theme.textTheme.titleLarge?.copyWith(
+                                height: 1.05,
+                              ),
+                            ),
+                          ],
                         ),
-                        child: const Text('Willkommen ♥'),
                       ),
-                      FilledButton(
-                        onPressed: onSmartBasket,
-                        style: FilledButton.styleFrom(
-                          backgroundColor: theme.colorScheme.primary,
-                          foregroundColor: Colors.white,
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(999),
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 10,
+                      const SizedBox(width: 10),
+                      SizedBox(
+                        width: 110,
+                        child: Center(
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              Container(
+                                width: 92,
+                                height: 72,
+                                decoration: BoxDecoration(
+                                  color: Colors.white.withOpacity(0.55),
+                                  borderRadius: BorderRadius.circular(16),
+                                ),
+                              ),
+                              const Icon(
+                                Icons.local_shipping_rounded,
+                                size: 56,
+                                color: Color(0xFF6B6B6B),
+                              ),
+                              Positioned(
+                                top: 10,
+                                child: Container(
+                                  width: 28,
+                                  height: 22,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFFE53935),
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: const Icon(
+                                    Icons.card_giftcard,
+                                    size: 16,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                        child: const Text('Smart Basket (1 Tap)'),
                       ),
                     ],
                   ),
-                ],
-              ),
+                ),
+                Positioned(
+                  right: 10,
+                  top: 0,
+                  bottom: 0,
+                  child: Center(
+                    child: Container(
+                      width: 34,
+                      height: 34,
+                      decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.75),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(Icons.chevron_right),
+                    ),
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(width: 12),
-            Container(
-              width: 74,
-              height: 74,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF1E9E3),
-                borderRadius: BorderRadius.circular(14),
-              ),
-              child: const Icon(
-                Icons.local_shipping_outlined,
-                size: 34,
-                color: Color(0xFF5B534E),
-              ),
-            ),
-          ],
+          ),
         ),
       ),
     );
@@ -872,7 +1604,7 @@ class _GiftCard extends StatelessWidget {
               left: 10,
               child: CircleAvatar(
                 radius: 16,
-                backgroundColor: Colors.white.withValues(alpha: 0.85),
+                backgroundColor: Colors.white.withOpacity(0.85),
                 child: Text(
                   '$index',
                   style: const TextStyle(
@@ -951,7 +1683,7 @@ class _ProductCard extends StatelessWidget {
                       width: 34,
                       height: 34,
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.92),
+                        color: Colors.white.withOpacity(0.92),
                         borderRadius: BorderRadius.circular(12),
                       ),
                       child: const Icon(Icons.add, size: 20),
