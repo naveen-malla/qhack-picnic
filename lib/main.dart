@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:qhack_picnic/calendar_sync_service.dart';
 import 'package:http_parser/http_parser.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:record/record.dart';
@@ -11,6 +12,9 @@ import 'social_screen.dart';
 
 final wishlistStore = WishlistStore();
 final uiRecording = ValueNotifier<bool>(false);
+
+/// SnackBars from [CalendarSyncService] (no BuildContext in the service).
+final appScaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
 FoodItem? catalogById(String id) {
   for (final item in foodCatalog) {
@@ -33,24 +37,35 @@ String _normalizeItemName(String s) {
 FoodItem? mapToCatalog(String normalized) {
   final n = normalized.trim().toLowerCase();
   final alias = <String, String>{
-    // Original requested ids
+    // Q-picnic / meal_catalog ids → Flutter catalog ids (see assets in Sheet1 CSV)
     'leer_dammer': 'leerdammer_original',
     'leerdammer': 'leerdammer_original',
     'sandwich_bread': 'sandwich_bread',
     'salatgurke': 'salatgurke',
     'salami': 'salami',
-    'sauce': 'sauce',
-
-    // Model normalizations (Gemini often returns English)
     'cucumber': 'salatgurke',
     'bio_tomaten_stueckig': 'bio_tomaten_stueckig',
     'tomatoes': 'bio_tomaten_stueckig',
     'tomato': 'bio_tomaten_stueckig',
     'leerdammer_cheese': 'leerdammer_original',
-    'leerdammer_cheese.': 'leerdammer_original',
-    'leerdammer_cheese,': 'leerdammer_original',
     'sandwich_bread.': 'sandwich_bread',
     'sandwich_bread,': 'sandwich_bread',
+    'gefluegel_mortadella': 'gefluegel_mortadella',
+    'wurst': 'gefluegel_mortadella',
+    'sausage': 'gefluegel_mortadella',
+    'bratwurst': 'gefluegel_mortadella',
+    'ketchup': 'ketchup',
+    'pizza_dough': 'pizza_dough',
+    'mozzarella': 'mozzarella',
+    'mozarella': 'mozzarella',
+    'olive_oil': 'olive_oil',
+    'pizza': 'pizza_dough',
+    'sandwich': 'sandwich_bread',
+    'cordon_bleu': 'cordon_bleu',
+    'hahnchen_cordon_bleu': 'cordon_bleu',
+    'orange_juice': 'orange_juice',
+    'rice': 'rice',
+    'basmati': 'rice',
   };
 
   final mappedId = alias[n];
@@ -202,6 +217,7 @@ class FoodItem {
   final String assetPath;
 }
 
+/// Aligned with `Q-picnic database(Sheet1).csv` (+ salami for bbq meal_catalog).
 const foodCatalog = <FoodItem>[
   FoodItem(
     id: 'leerdammer_original',
@@ -230,34 +246,6 @@ const foodCatalog = <FoodItem>[
     description: 'Wiesenhof · 100g · €16.90/kg',
     price: 1.69,
     assetPath: 'assets/foods/geflügel.jpg',
-  ),
-  FoodItem(
-    id: 'Vollkorn-Brot',
-    name: 'Vollkorn-Brot',
-    description: 'Brot · 750g · €3.32/kg',
-    price: 2.49,
-    assetPath: 'assets/foods/bread.jpg',
-  ),
-  FoodItem(
-    id: 'salami',
-    name: 'Salami',
-    description: '100g · sliced (demo)',
-    price: 2.19,
-    assetPath: 'assets/foods/geflügel.jpg',
-  ),
-  FoodItem(
-    id: 'sandwich_bread',
-    name: 'Sandwich Bread',
-    description: 'Brot · 750g · €3.32/kg',
-    price: 2.49,
-    assetPath: 'assets/foods/bread.jpg',
-  ),
-  FoodItem(
-    id: 'sauce',
-    name: 'Sauce',
-    description: 'Condiment (demo)',
-    price: 1.49,
-    assetPath: 'assets/foods/tomaten.jpg',
   ),
   FoodItem(
     id: 'bio_tomaten_stueckig',
@@ -294,7 +282,100 @@ const foodCatalog = <FoodItem>[
     price: 0.99,
     assetPath: 'assets/foods/zucchini.png',
   ),
+  FoodItem(
+    id: 'sandwich_bread',
+    name: 'Sandwich Bread',
+    description: '750g · demo',
+    price: 2.49,
+    assetPath: 'assets/foods/sandwich_bread.jpg',
+  ),
+  FoodItem(
+    id: 'pizza_dough',
+    name: 'Pizza dough',
+    description: 'Frisch · demo',
+    price: 2.29,
+    assetPath: 'assets/foods/pizza_dough.jpg',
+  ),
+  FoodItem(
+    id: 'mozzarella',
+    name: 'Mozzarella',
+    description: '125g · demo',
+    price: 1.49,
+    assetPath: 'assets/foods/mozarella.jpg',
+  ),
+  FoodItem(
+    id: 'olive_oil',
+    name: 'Olive oil',
+    description: '500ml · demo',
+    price: 4.99,
+    assetPath: 'assets/foods/olive_oil.jpg',
+  ),
+  FoodItem(
+    id: 'salami',
+    name: 'Salami',
+    description: '100g · sliced (demo)',
+    price: 2.19,
+    assetPath: 'assets/foods/salami.jpg',
+  ),
 ];
+
+/// One suggested catalog line from calendar/manual analysis (shown on Entdecken only).
+class CalendarSuggestion {
+  const CalendarSuggestion({
+    required this.item,
+    required this.quantity,
+    this.note,
+  });
+
+  final FoodItem item;
+  final int quantity;
+  final String? note;
+}
+
+/// Holds suggestions from `/api/extract` via the Kalender tab — does not add to [wishlistStore] automatically.
+class CalendarSuggestionStore extends ChangeNotifier {
+  List<CalendarSuggestion> suggestions = [];
+
+  void setFromExtracted(Map<String, dynamic> extracted) {
+    final items = (extracted['items'] as List?) ?? const [];
+    final byId = <String, CalendarSuggestion>{};
+    for (final it in items) {
+      final m = (it as Map?)?.cast<String, dynamic>();
+      final rawName = (m?['name'] ?? '').toString();
+      final norm = _normalizeItemName(rawName);
+      if (norm.isEmpty) continue;
+      final catalogItem = mapToCatalog(norm);
+      if (catalogItem == null) continue;
+      final q = m?['quantity'];
+      final qty = q is num ? q.toInt() : 1;
+      final add = qty <= 0 ? 1 : qty;
+      final noteRaw = (m?['notes'] as String?)?.trim();
+      final prev = byId[catalogItem.id];
+      if (prev != null) {
+        byId[catalogItem.id] = CalendarSuggestion(
+          item: catalogItem,
+          quantity: prev.quantity + add,
+          note: (noteRaw != null && noteRaw.isNotEmpty) ? noteRaw : prev.note,
+        );
+      } else {
+        byId[catalogItem.id] = CalendarSuggestion(
+          item: catalogItem,
+          quantity: add,
+          note: (noteRaw != null && noteRaw.isNotEmpty) ? noteRaw : null,
+        );
+      }
+    }
+    suggestions = byId.values.toList();
+    notifyListeners();
+  }
+
+  void clear() {
+    suggestions = [];
+    notifyListeners();
+  }
+}
+
+final calendarSuggestionStore = CalendarSuggestionStore();
 
 void main() {
   wishlistStore.startPolling();
@@ -311,6 +392,7 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     const seed = Color(0xFF3E7D2A); // Picnic-like green
     return MaterialApp(
+      scaffoldMessengerKey: appScaffoldMessengerKey,
       debugShowCheckedModeBanner: false,
       title: 'Picnic',
       theme: ThemeData(
@@ -354,10 +436,12 @@ class PicnicShell extends StatefulWidget {
   State<PicnicShell> createState() => _PicnicShellState();
 }
 
-class _PicnicShellState extends State<PicnicShell> {
+class _PicnicShellState extends State<PicnicShell> with WidgetsBindingObserver {
   int _tabIndex = 0;
 
   void _goToFavoriten() => setState(() => _tabIndex = 1);
+
+  void _goToWarenkorb() => setState(() => _tabIndex = 4);
 
   FoodItem _food(String id) => foodCatalog.firstWhere((item) => item.id == id);
 
@@ -383,13 +467,37 @@ class _PicnicShellState extends State<PicnicShell> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     wishlistStore.addListener(_onWishlistChanged);
+    CalendarSyncService.instance.configure(
+      apiBase: WishlistStore.apiBase,
+      apiKey: WishlistStore.apiKey,
+      onSuggestionsReady: calendarSuggestionStore.setFromExtracted,
+      onNavigateToEntdecken: () {
+        if (mounted) setState(() => _tabIndex = 0);
+      },
+      onStatusMessage: (msg) {
+        appScaffoldMessengerKey.currentState?.showSnackBar(
+          SnackBar(content: Text(msg)),
+        );
+      },
+    );
+    CalendarSyncService.instance.start();
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    CalendarSyncService.instance.stop();
     wishlistStore.removeListener(_onWishlistChanged);
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) {
+      CalendarSyncService.instance.onAppResumed();
+    }
   }
 
   void _onWishlistChanged() {
@@ -407,7 +515,7 @@ class _PicnicShellState extends State<PicnicShell> {
 
     final pages = <Widget>[
       DiscoverScreen(onGoToFavoriten: _goToFavoriten),
-      const FavoritenScreen(),
+      FavoritenScreen(onGoToWarenkorb: _goToWarenkorb),
       const _PlaceholderScreen(title: 'Kochen'),
       SocialScreen(
         recipePost: const SocialRecipePostData(
@@ -494,7 +602,12 @@ class _PicnicShellState extends State<PicnicShell> {
       ),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _tabIndex,
-        onDestinationSelected: (i) => setState(() => _tabIndex = i),
+        onDestinationSelected: (i) {
+          setState(() => _tabIndex = i);
+          if (i == 0) {
+            CalendarSyncService.instance.onEntdeckenTabSelected();
+          }
+        },
         destinations: [
           const NavigationDestination(
             icon: Icon(Icons.storefront_outlined),
@@ -803,7 +916,10 @@ class _BasketWishlistScreenState extends State<BasketWishlistScreen> {
 }
 
 class FavoritenScreen extends StatefulWidget {
-  const FavoritenScreen({super.key});
+  const FavoritenScreen({super.key, this.onGoToWarenkorb});
+
+  /// After a successful bulk add, switch to the Warenkorb tab so items are visible.
+  final VoidCallback? onGoToWarenkorb;
 
   @override
   State<FavoritenScreen> createState() => _FavoritenScreenState();
@@ -811,9 +927,6 @@ class FavoritenScreen extends StatefulWidget {
 
 class _FavoritenScreenState extends State<FavoritenScreen> {
   final List<bool> _added = [false, false, false, false, false, false];
-
-  /// After a successful bulk add the button hides until the user selects an addable item again.
-  bool _bulkAddHidden = false;
 
   FoodItem _get(String id) => foodCatalog.firstWhere((e) => e.id == id);
 
@@ -826,20 +939,15 @@ class _FavoritenScreenState extends State<FavoritenScreen> {
   List<FoodItem> get _addableItems => [
         _get('cordon_bleu'),
         _get('gefluegel_mortadella'),
-        _get('Vollkorn-Brot'),
+        _get('sandwich_bread'),
         _get('ketchup'),
         _get('orange_juice'),
         _get('rice'),
       ];
 
-  bool get _showZumWarenkorbButton => !_bulkAddHidden || _added.any((e) => e);
-
   void _onToggleAddable(int i) {
     setState(() {
       _added[i] = !_added[i];
-      if (_added[i]) {
-        _bulkAddHidden = false;
-      }
     });
   }
 
@@ -853,9 +961,20 @@ class _FavoritenScreenState extends State<FavoritenScreen> {
         wishlistStore.inc(addable[i].id);
       }
     }
+    if (!mounted) return;
     setState(() {
       _added.setAll(0, List<bool>.filled(_added.length, false));
-      _bulkAddHidden = true;
+    });
+    final messenger = ScaffoldMessenger.maybeOf(context);
+    messenger?.showSnackBar(
+      const SnackBar(
+        content: Text('Artikel zum Warenkorb hinzugefügt'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    // Switch tab after this frame so gesture / ink completes and state is stable.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      widget.onGoToWarenkorb?.call();
     });
   }
 
@@ -866,101 +985,98 @@ class _FavoritenScreenState extends State<FavoritenScreen> {
     final preSelected = _preSelectedItems;
     final addable = _addableItems;
 
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(12, 16, 12, 24),
-      children: [
-        Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4),
-          child: Text(
-            'Bestellen Sie wieder',
-            style: theme.textTheme.titleLarge,
+    // Own Scaffold so Material/InkWell and SnackBars behave; body still under PicnicShell SafeArea.
+    return Scaffold(
+      backgroundColor: Colors.transparent,
+      body: ListView(
+        padding: const EdgeInsets.fromLTRB(12, 16, 12, 24),
+        children: [
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(
+              'Bestellen Sie wieder',
+              style: theme.textTheme.titleLarge,
+            ),
           ),
-        ),
-        const SizedBox(height: 30),
-        // Row 1 – pre-selected items
-        IntrinsicHeight(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: preSelected
-                .map(
-                  (item) => Expanded(
-                    child: Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 4),
-                      child: _FavoritenCard(
-                        item: item,
-                        isPreSelected: true,
-                        isAdded: false,
+          const SizedBox(height: 30),
+          // Row 1 – pre-selected items
+          IntrinsicHeight(
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: preSelected
+                  .map(
+                    (item) => Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: _FavoritenCard(
+                          item: item,
+                          isPreSelected: true,
+                          isAdded: false,
+                        ),
                       ),
                     ),
-                  ),
-                )
-                .toList(),
+                  )
+                  .toList(),
+            ),
           ),
-        ),
-        const SizedBox(height: 25),
-        // Add-to-cart button (right-aligned); hidden after add until user selects again.
-        if (_showZumWarenkorbButton) ...[
-          Align(
-            alignment: Alignment.centerRight,
-            child: Padding(
-              padding: const EdgeInsets.only(right: 4),
-              child: FilledButton(
-                onPressed: _addSelectionToWishlist,
-                style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFE53935),
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 11,
-                    vertical: 12,
-                  ),
+          const SizedBox(height: 25),
+          // Full-width tap target — easier to hit than a small right-aligned chip.
+          SizedBox(
+            width: double.infinity,
+            child: ElevatedButton(
+              onPressed: _addSelectionToWishlist,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFFE53935),
+                foregroundColor: Colors.white,
+                elevation: 0,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
                 ),
-                child: const Text(
-                  'Zum Warenkorb hinzufügen',
-                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
-                ),
+              ),
+              child: const Text(
+                'Zum Warenkorb hinzufügen',
+                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 15),
               ),
             ),
           ),
           const SizedBox(height: 45),
-        ] else
-          const SizedBox(height: 8),
-        Padding(
-          padding: const EdgeInsets.only(left: 4, bottom: 10),
-          child: Text(
-            'Vorschläge für Sie',
-            style: Theme.of(context).textTheme.titleMedium,
-          ),
-        ),
-        // Rows 2 & 3 – addable items (3 per row)
-        for (int row = 0; row < (addable.length / 3).ceil(); row++) ...[
-          if (row > 0) const SizedBox(height: 12),
-          IntrinsicHeight(
-            child: Row(
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: List.generate(3, (col) {
-                final i = row * 3 + col;
-                if (i >= addable.length) {
-                  return const Expanded(child: SizedBox());
-                }
-                return Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    child: _FavoritenCard(
-                      item: addable[i],
-                      isPreSelected: false,
-                      isAdded: _added[i],
-                      onAdd: () => _onToggleAddable(i),
-                    ),
-                  ),
-                );
-              }),
+          Padding(
+            padding: const EdgeInsets.only(left: 4, bottom: 10),
+            child: Text(
+              'Vorschläge für Sie',
+              style: Theme.of(context).textTheme.titleMedium,
             ),
           ),
+          // Rows 2 & 3 – addable items (3 per row)
+          for (int row = 0; row < (addable.length / 3).ceil(); row++) ...[
+            if (row > 0) const SizedBox(height: 12),
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: List.generate(3, (col) {
+                  final i = row * 3 + col;
+                  if (i >= addable.length) {
+                    return const Expanded(child: SizedBox());
+                  }
+                  return Expanded(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 4),
+                      child: _FavoritenCard(
+                        item: addable[i],
+                        isPreSelected: false,
+                        isAdded: _added[i],
+                        onAdd: () => _onToggleAddable(i),
+                      ),
+                    ),
+                  );
+                }),
+              ),
+            ),
+          ],
         ],
-      ],
+      ),
     );
   }
 }
@@ -1150,6 +1266,166 @@ class _QtyStepper extends StatelessWidget {
   }
 }
 
+class _CalendarSuggestionsSection extends StatelessWidget {
+  const _CalendarSuggestionsSection({
+    required this.suggestions,
+    required this.onDismiss,
+    required this.onAddToCart,
+  });
+
+  final List<CalendarSuggestion> suggestions;
+  final VoidCallback onDismiss;
+  final void Function(FoodItem item, int qty) onAddToCart;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    return Card(
+      elevation: 0,
+      color: theme.colorScheme.primaryContainer.withOpacity(0.35),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 10, 8, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.event_note,
+                    size: 20, color: theme.colorScheme.primary),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'Vorschläge aus Kalender & Terminen',
+                    style: theme.textTheme.titleSmall?.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  onPressed: onDismiss,
+                  child: const Text('Ausblenden'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 4),
+            Text(
+              'Hier landen Artikel aus deiner Kalender-Analyse — tippe, um sie in den Warenkorb zu legen.',
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+            const SizedBox(height: 10),
+            SizedBox(
+              height: 148,
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: suggestions.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 10),
+                itemBuilder: (context, i) {
+                  final s = suggestions[i];
+                  return _CalendarSuggestionTile(
+                    suggestion: s,
+                    onAdd: () => onAddToCart(s.item, s.quantity),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _CalendarSuggestionTile extends StatelessWidget {
+  const _CalendarSuggestionTile({
+    required this.suggestion,
+    required this.onAdd,
+  });
+
+  final CalendarSuggestion suggestion;
+  final VoidCallback onAdd;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final s = suggestion;
+    return SizedBox(
+      width: 200,
+      child: Material(
+        color: theme.colorScheme.surface,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.all(8),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(8),
+                    child: Image.asset(
+                      s.item.assetPath,
+                      width: 48,
+                      height: 48,
+                      fit: BoxFit.cover,
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          s.item.name,
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
+                          style: theme.textTheme.titleSmall,
+                        ),
+                        Text(
+                          'Vorschlag: ${s.quantity}×',
+                          style: theme.textTheme.labelSmall?.copyWith(
+                            color: theme.colorScheme.primary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              if (s.note != null && s.note!.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text(
+                  s.note!,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    fontSize: 10,
+                    color: theme.colorScheme.onSurfaceVariant,
+                  ),
+                ),
+              ],
+              const SizedBox(height: 6),
+              SizedBox(
+                width: double.infinity,
+                child: FilledButton.tonal(
+                  onPressed: onAdd,
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 6),
+                  ),
+                  child: const Text('In den Warenkorb',
+                      style: TextStyle(fontSize: 12)),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
 class DiscoverScreen extends StatefulWidget {
   const DiscoverScreen({super.key, this.onGoToFavoriten});
 
@@ -1172,10 +1448,16 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       vsync: this,
       duration: const Duration(milliseconds: 1400),
     );
+    calendarSuggestionStore.addListener(_onCalendarSuggestionsChanged);
+  }
+
+  void _onCalendarSuggestionsChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
+    calendarSuggestionStore.removeListener(_onCalendarSuggestionsChanged);
     _listenAnim.dispose();
     _recorder.dispose();
     super.dispose();
@@ -1322,6 +1604,29 @@ class _DiscoverScreenState extends State<DiscoverScreen>
                 ),
               ),
             ),
+            if (calendarSuggestionStore.suggestions.isNotEmpty)
+              SliverPadding(
+                padding: EdgeInsets.fromLTRB(
+                  horizontalPadding,
+                  0,
+                  horizontalPadding,
+                  12,
+                ),
+                sliver: SliverToBoxAdapter(
+                  child: _CalendarSuggestionsSection(
+                    suggestions: calendarSuggestionStore.suggestions,
+                    onDismiss: () => calendarSuggestionStore.clear(),
+                    onAddToCart: (FoodItem item, int qty) {
+                      wishlistStore.inc(item.id, by: qty);
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                          content: Text('${item.name} ($qty×) zum Warenkorb'),
+                        ),
+                      );
+                    },
+                  ),
+                ),
+              ),
             SliverPadding(
               padding: EdgeInsets.fromLTRB(
                 horizontalPadding,
@@ -1438,11 +1743,11 @@ class SmartBasketReviewScreen extends StatelessWidget {
 
     final recipeItems = <_SmartBasketItem>[
       _SmartBasketItem.fromFood(
-        foodCatalog.firstWhere((e) => e.id == 'salatgurke'),
-        reasons: const ['Recipe ingredient', 'Best match in stock'],
+        foodCatalog.firstWhere((e) => e.id == 'pizza_dough'),
+        reasons: const ['Q-picnic Pizza dish', 'From Sheet2'],
       ),
       _SmartBasketItem.fromFood(
-        foodCatalog.firstWhere((e) => e.id == 'haehnchenbrustfilet'),
+        foodCatalog.firstWhere((e) => e.id == 'mozzarella'),
         reasons: const ['Recipe ingredient', 'Popular choice'],
       ),
       _SmartBasketItem.fromFood(
@@ -1453,16 +1758,16 @@ class SmartBasketReviewScreen extends StatelessWidget {
 
     final staples = <_SmartBasketItem>[
       _SmartBasketItem.fromFood(
-        foodCatalog.firstWhere((e) => e.id == 'bio_vollmilch'),
-        reasons: const ['Your usual', 'Best value'],
+        foodCatalog.firstWhere((e) => e.id == 'sandwich_bread'),
+        reasons: const ['Q-picnic Sandwich dish', 'From Sheet2'],
       ),
       _SmartBasketItem.fromFood(
-        foodCatalog.firstWhere((e) => e.id == 'knoppers'),
-        reasons: const ['Frequent purchase', 'In stock'],
+        foodCatalog.firstWhere((e) => e.id == 'ketchup'),
+        reasons: const ['Pantry staple', 'In stock'],
       ),
       _SmartBasketItem.fromFood(
-        foodCatalog.firstWhere((e) => e.id == 'wasser_medium'),
-        reasons: const ['Frequent purchase', 'Great with breakfast'],
+        foodCatalog.firstWhere((e) => e.id == 'orange_juice'),
+        reasons: const ['Beverage', 'Demo pick'],
       ),
     ];
 
