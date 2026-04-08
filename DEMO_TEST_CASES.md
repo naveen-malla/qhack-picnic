@@ -1,9 +1,20 @@
-# Q-picnic demo — test phrases (audio & calendar)
+# Q-picnic demo — test phrases and integration notes
 
 Data source: `Q-picnic database(Sheet1).csv` (products + image paths), `Q-picnic database(Sheet2).csv` (dish → items: **Sandwich**, **Pizza**).  
 Backend: `meal_catalog.json` meals `picnic_sandwich`, `picnic_pizza`, plus `bbq_grill`, `salami_sandwich`, `simple_salad`.
 
-## Voice input (Entdecken → microphone)
+## Input Paths In The Current App
+
+- **Voice** (`/api/voice/ingest`)
+  - items go directly into the **Warenkorb**
+- **Calendar** (`/api/extract`)
+  - items appear as **Vorschläge** on **Entdecken**
+  - they are not added automatically
+- **External hook / plugin queue** (`/api/wishlist/next`)
+  - items also go into the **Warenkorb**
+  - in the current demo setup, this queue is the path used for sources such as WhatsApp
+
+## Voice Input (Entdecken → microphone)
 
 Speak clearly in **English or German**. Include a **people count** when you want scaled quantities.
 
@@ -23,14 +34,7 @@ Speak clearly in **English or German**. Include a **people count** when you want
 - „**Pizza** für **4 Personen**, selbst gemacht.“
 - „**Grillparty** für **10 Leute**, **Bratwurst** und **Barbecue**.“
 
-### What gets added
-
-- **Voice** (`/api/voice/ingest`): items go into the **Warenkorb** (wishlist queue path).
-- **Calendar** (`/api/extract`): items appear as **Vorschläge** on **Entdecken** (not auto-basket).
-
----
-
-## Calendar event text (title / description)
+## Calendar Event Text (title / description)
 
 Use your **primary** calendar. Put the scenario in **title** or **description** (the app concatenates both).
 
@@ -56,10 +60,8 @@ Use your **primary** calendar. Put the scenario in **title** or **description** 
 
 - Include a **number + people/guests/Personen** for scaling.
 - Mention **sandwich**, **pizza**, **BBQ/grill**, **salad**, or **salami sandwich** so `meal_id` matches.
-- After editing an event, return to the app and open **Entdecken** (or wait for background sync).
-
----
+- After editing an event, return to the app and open **Entdecken** or wait for the background sync.
 
 ## Images
 
-Asset paths follow Sheet1 (e.g. `assets/foods/sandwich_bread.jpg`, `pizza_dough.jpg`, `mozarella.jpg`, `olive_oil.jpg`). Ensure those files exist under `qhack-picnic/assets/foods/`.
+Asset paths follow Sheet1 (for example `assets/foods/sandwich_bread.jpg`, `pizza_dough.jpg`, `mozarella.jpg`, `olive_oil.jpg`). Ensure those files exist under `qhack-picnic/assets/foods/`.
