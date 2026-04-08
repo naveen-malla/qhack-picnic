@@ -8,7 +8,7 @@ void main() {
     await tester.pumpWidget(const MyApp(startOnSmartBasket: false));
     await tester.pumpAndSettle();
 
-    expect(find.text('Smart Basket (1 Tap)'), findsOneWidget);
+    expect(find.text('Wähle deine Lieferzeit ›'), findsOneWidget);
     expect(find.byType(NavigationBar), findsOneWidget);
 
     await tester.tap(find.text('Favoriten'));
