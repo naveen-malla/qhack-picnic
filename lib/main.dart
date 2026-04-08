@@ -194,22 +194,6 @@ class FoodItem {
   final String assetPath;
 }
 
-const reorderCatalog = <FoodItem>[
-  FoodItem(
-    id: 'leerdammer_original',
-    name: 'Leerdammer Original',
-    description: '140g · €20.64/kg',
-    price: 2.89,
-    assetPath: 'assets/foods/leer_dammer.jpg',
-  ),
-  FoodItem(
-    id: 'bio_tomaten_stueckig',
-    name: 'Bio Tomaten stückig',
-    description: 'Edeka Bio · 400g · €1.98/kg',
-    price: 0.79,
-    assetPath: 'assets/foods/tomaten.jpg',
-  ),
-];
 const foodCatalog = <FoodItem>[
   FoodItem(
     id: 'leerdammer_original',
@@ -720,26 +704,59 @@ class FavoritenScreen extends StatefulWidget {
 class _FavoritenScreenState extends State<FavoritenScreen> {
   final List<bool> _added = [false, false, false, false, false, false];
 
+  /// After a successful bulk add the button hides until the user selects an addable item again.
+  bool _bulkAddHidden = false;
+
   FoodItem _get(String id) => foodCatalog.firstWhere((e) => e.id == id);
+
+  List<FoodItem> get _preSelectedItems => [
+        _get('leerdammer_original'),
+        _get('salatgurke'),
+        _get('bio_tomaten_stueckig'),
+      ];
+
+  List<FoodItem> get _addableItems => [
+        _get('cordon_bleu'),
+        _get('gefluegel_mortadella'),
+        _get('Vollkorn-Brot'),
+        _get('ketchup'),
+        _get('orange_juice'),
+        _get('rice'),
+      ];
+
+  bool get _showZumWarenkorbButton => !_bulkAddHidden || _added.any((e) => e);
+
+  void _onToggleAddable(int i) {
+    setState(() {
+      _added[i] = !_added[i];
+      if (_added[i]) {
+        _bulkAddHidden = false;
+      }
+    });
+  }
+
+  void _addSelectionToWishlist() {
+    for (final item in _preSelectedItems) {
+      wishlistStore.inc(item.id);
+    }
+    final addable = _addableItems;
+    for (var i = 0; i < addable.length; i++) {
+      if (_added[i]) {
+        wishlistStore.inc(addable[i].id);
+      }
+    }
+    setState(() {
+      _added.setAll(0, List<bool>.filled(_added.length, false));
+      _bulkAddHidden = true;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
 
-    final preSelected = [
-      _get('leerdammer_original'),
-      _get('salatgurke'),
-      _get('bio_tomaten_stueckig'),
-    ];
-
-    final addable = [
-      _get('cordon_bleu'),
-      _get('gefluegel_mortadella'),
-      _get('Vollkorn-Brot'),
-      _get('ketchup'),
-      _get('orange_juice'),
-      _get('rice'),
-    ];
+    final preSelected = _preSelectedItems;
+    final addable = _addableItems;
 
     return ListView(
       padding: const EdgeInsets.fromLTRB(12, 16, 12, 24),
@@ -773,32 +790,35 @@ class _FavoritenScreenState extends State<FavoritenScreen> {
           ),
         ),
         const SizedBox(height: 25),
-        // Add-to-cart button (right-aligned)
-        Align(
-          alignment: Alignment.centerRight,
-          child: Padding(
-            padding: const EdgeInsets.only(right: 4),
-            child: FilledButton(
-              onPressed: () {},
-              style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFFE53935),
-                foregroundColor: Colors.white,
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
+        // Add-to-cart button (right-aligned); hidden after add until user selects again.
+        if (_showZumWarenkorbButton) ...[
+          Align(
+            alignment: Alignment.centerRight,
+            child: Padding(
+              padding: const EdgeInsets.only(right: 4),
+              child: FilledButton(
+                onPressed: _addSelectionToWishlist,
+                style: FilledButton.styleFrom(
+                  backgroundColor: const Color(0xFFE53935),
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(12),
+                  ),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 11,
+                    vertical: 12,
+                  ),
                 ),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 11,
-                  vertical: 12,
+                child: const Text(
+                  'Zum Warenkorb hinzufügen',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
                 ),
-              ),
-              child: const Text(
-                'Zum Warenkorb hinzufügen',
-                style: TextStyle(fontWeight: FontWeight.w700, fontSize: 14),
               ),
             ),
           ),
-        ),
-        const SizedBox(height: 45),
+          const SizedBox(height: 45),
+        ] else
+          const SizedBox(height: 8),
         Padding(
           padding: const EdgeInsets.only(left: 4, bottom: 10),
           child: Text(
@@ -824,7 +844,7 @@ class _FavoritenScreenState extends State<FavoritenScreen> {
                       item: addable[i],
                       isPreSelected: false,
                       isAdded: _added[i],
-                      onAdd: () => setState(() => _added[i] = !_added[i]),
+                      onAdd: () => _onToggleAddable(i),
                     ),
                   ),
                 );
@@ -1260,9 +1280,9 @@ class _DiscoverScreenState extends State<DiscoverScreen>
               crossAxisSpacing: 12,
               childAspectRatio: 0.78,
             ),
-            itemCount: reorderCatalog.length,
+            itemCount: foodCatalog.length,
             itemBuilder: (context, idx) {
-              final item = reorderCatalog[idx];
+              final item = foodCatalog[idx];
               final bgColors = [
                 const Color(0xFFE7EEDD),
                 const Color(0xFFF1E1E1),
