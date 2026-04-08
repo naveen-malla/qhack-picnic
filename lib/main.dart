@@ -441,8 +441,6 @@ class _PicnicShellState extends State<PicnicShell> with WidgetsBindingObserver {
 
   void _goToFavoriten() => setState(() => _tabIndex = 1);
 
-  void _goToWarenkorb() => setState(() => _tabIndex = 4);
-
   FoodItem _food(String id) => foodCatalog.firstWhere((item) => item.id == id);
 
   void _addItemsToBasket(
@@ -515,7 +513,7 @@ class _PicnicShellState extends State<PicnicShell> with WidgetsBindingObserver {
 
     final pages = <Widget>[
       DiscoverScreen(onGoToFavoriten: _goToFavoriten),
-      FavoritenScreen(onGoToWarenkorb: _goToWarenkorb),
+      const FavoritenScreen(),
       const _PlaceholderScreen(title: 'Kochen'),
       SocialScreen(
         recipePost: const SocialRecipePostData(
@@ -916,10 +914,7 @@ class _BasketWishlistScreenState extends State<BasketWishlistScreen> {
 }
 
 class FavoritenScreen extends StatefulWidget {
-  const FavoritenScreen({super.key, this.onGoToWarenkorb});
-
-  /// After a successful bulk add, switch to the Warenkorb tab so items are visible.
-  final VoidCallback? onGoToWarenkorb;
+  const FavoritenScreen({super.key});
 
   @override
   State<FavoritenScreen> createState() => _FavoritenScreenState();
@@ -972,10 +967,6 @@ class _FavoritenScreenState extends State<FavoritenScreen> {
         behavior: SnackBarBehavior.floating,
       ),
     );
-    // Switch tab after this frame so gesture / ink completes and state is stable.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      widget.onGoToWarenkorb?.call();
-    });
   }
 
   @override
