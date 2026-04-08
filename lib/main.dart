@@ -7,6 +7,8 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'social_screen.dart';
+
 final wishlistStore = WishlistStore();
 final uiRecording = ValueNotifier<bool>(false);
 
@@ -63,7 +65,8 @@ FoodItem? mapToCatalog(String normalized) {
 
 class WishlistStore extends ChangeNotifier {
   static const apiBase = 'http://127.0.0.1:5001';
-  static const apiKey = String.fromEnvironment('WISHLIST_API_KEY', defaultValue: 'dev-token');
+  static const apiKey =
+      String.fromEnvironment('WISHLIST_API_KEY', defaultValue: 'dev-token');
 
   final Map<String, int> qtyById = {};
   Timer? _pollTimer;
@@ -141,7 +144,8 @@ class WishlistStore extends ChangeNotifier {
     _busy = true;
     try {
       while (true) {
-        final nextUri = Uri.parse('$apiBase/api/wishlist/next').replace(queryParameters: {'api_key': apiKey});
+        final nextUri = Uri.parse('$apiBase/api/wishlist/next')
+            .replace(queryParameters: {'api_key': apiKey});
         final nextResp = await http.get(nextUri);
         if (nextResp.statusCode == 204) return;
         if (nextResp.statusCode != 200) return;
@@ -149,7 +153,9 @@ class WishlistStore extends ChangeNotifier {
         final payload = jsonDecode(nextResp.body) as Map<String, dynamic>;
         final wishlistId = (payload['id'] ?? '').toString();
         final from = (payload['from'] ?? '').toString();
-        final extracted = (payload['extracted'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+        final extracted =
+            (payload['extracted'] as Map?)?.cast<String, dynamic>() ??
+                <String, dynamic>{};
 
         addItemsFromExtracted(extracted);
 
@@ -163,11 +169,13 @@ class WishlistStore extends ChangeNotifier {
           if (norm.isNotEmpty) normalizedNames.add(norm);
         }
 
-        final confirmUri = Uri.parse('$apiBase/api/wishlist/confirm').replace(queryParameters: {'api_key': apiKey});
+        final confirmUri = Uri.parse('$apiBase/api/wishlist/confirm')
+            .replace(queryParameters: {'api_key': apiKey});
         await http.post(
           confirmUri,
           headers: const {'Content-Type': 'application/json'},
-          body: jsonEncode({'id': wishlistId, 'from': from, 'items': normalizedNames}),
+          body: jsonEncode(
+              {'id': wishlistId, 'from': from, 'items': normalizedNames}),
         );
       }
     } catch (_) {
@@ -279,6 +287,13 @@ const foodCatalog = <FoodItem>[
     price: 1.99,
     assetPath: 'assets/foods/rice.jpg',
   ),
+  FoodItem(
+    id: 'zucchini',
+    name: 'Zucchini',
+    description: '1 Stück · ca. 200g',
+    price: 0.99,
+    assetPath: 'assets/foods/zucchini.png',
+  ),
 ];
 
 void main() {
@@ -344,6 +359,27 @@ class _PicnicShellState extends State<PicnicShell> {
 
   void _goToFavoriten() => setState(() => _tabIndex = 1);
 
+  FoodItem _food(String id) => foodCatalog.firstWhere((item) => item.id == id);
+
+  void _addItemsToBasket(
+    BuildContext context,
+    List<FoodItem> items, {
+    required String label,
+  }) {
+    for (final item in items) {
+      wishlistStore.inc(item.id);
+    }
+
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(
+        SnackBar(
+          content: Text('$label zum Warenkorb hinzugefügt'),
+          backgroundColor: const Color(0xFF3E7D2A),
+        ),
+      );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -362,11 +398,77 @@ class _PicnicShellState extends State<PicnicShell> {
 
   @override
   Widget build(BuildContext context) {
+    final rice = _food('rice');
+    final tomatoes = _food('bio_tomaten_stueckig');
+    final zucchini = _food('zucchini');
+    final cucumber = _food('salatgurke');
+    final recipeItems = <FoodItem>[rice, tomatoes, zucchini];
+    final challengeStarterKit = <FoodItem>[cucumber, tomatoes, zucchini];
+
     final pages = <Widget>[
       DiscoverScreen(onGoToFavoriten: _goToFavoriten),
       const FavoritenScreen(),
       const _PlaceholderScreen(title: 'Kochen'),
-      const _PlaceholderScreen(title: 'Suchen'),
+      SocialScreen(
+        recipePost: const SocialRecipePostData(
+          authorName: 'Anna F.',
+          authorSubtitle: 'teilt heute ihr Feierabendgericht',
+          dayLabel: 'Veggie Day 43',
+          title: 'Tomaten-Reis-Bowl',
+          caption:
+              'Drei Zutaten, eine Portion und genau der richtige Mix aus warm, frisch und unkompliziert.',
+          imageAssetPath: 'assets/foods/rice_bowl.jpg',
+          metrics: [
+            SocialMetric(value: '410', label: 'kcal'),
+            SocialMetric(value: '11g', label: 'Protein'),
+            SocialMetric(value: '62g', label: 'Carbs'),
+            SocialMetric(value: '14g', label: 'Fat'),
+          ],
+          ingredients: [
+            SocialIngredientLine(
+              name: 'Basmati Reis',
+              detail: '1 x 500 g Packung',
+            ),
+            SocialIngredientLine(
+              name: 'Bio Tomaten stückig',
+              detail: '1 x 400 g Dose',
+            ),
+            SocialIngredientLine(
+              name: 'Zucchini',
+              detail: '1 x Stück',
+            ),
+          ],
+          likes: 27,
+          comments: 3,
+          tipLabel:
+              'Tippe auf das Bild, um die Zutatenliste wie eine Karte umzudrehen.',
+        ),
+        challengePost: const SocialChallengePostData(
+          authorName: 'Sarah L.',
+          authorSubtitle: 'hat die Wochen-Challenge gestartet',
+          title: '3 saisonale Gemüse bis Sonntag',
+          description:
+              'Hol dir das Starter-Kit, koche etwas Frisches und bring beim nächsten Picnic-Abend ein buntes Gericht mit.',
+          rewardLabel: 'Bonus-Los fur die Verlosung',
+          participantCount: 33,
+          likes: 12,
+          communityImagePaths: [
+            'assets/foods/salatgurke.jpg',
+            'assets/foods/tomaten.jpg',
+            'assets/foods/zucchini.png',
+          ],
+        ),
+        onAddRecipeItems: () => _addItemsToBasket(
+          context,
+          recipeItems,
+          label: 'Tomaten-Reis-Bowl',
+        ),
+        onAddChallengeStarterKit: () => _addItemsToBasket(
+          context,
+          challengeStarterKit,
+          label: 'Challenge Starter-Kit',
+        ),
+      ),
       const BasketWishlistScreen(),
     ];
 
@@ -409,7 +511,11 @@ class _PicnicShellState extends State<PicnicShell> {
             selectedIcon: Icon(Icons.restaurant_menu),
             label: 'Kochen',
           ),
-          const NavigationDestination(icon: Icon(Icons.search), label: 'Suchen'),
+          const NavigationDestination(
+            icon: Icon(Icons.groups_2_outlined),
+            selectedIcon: Icon(Icons.groups_2),
+            label: 'Social',
+          ),
           NavigationDestination(
             icon: _CartNavIcon(
               outlined: true,
@@ -578,7 +684,8 @@ class _BasketWishlistScreenState extends State<BasketWishlistScreen> {
                             width: 44,
                             height: 44,
                             color: const Color(0xFFF0E8DD),
-                            child: Image.asset(item.assetPath, fit: BoxFit.cover),
+                            child:
+                                Image.asset(item.assetPath, fit: BoxFit.cover),
                           ),
                         ),
                         const SizedBox(width: 10),
@@ -663,7 +770,8 @@ class _BasketWishlistScreenState extends State<BasketWishlistScreen> {
                     ),
                     child: const Text(
                       'Zur Kasse',
-                      style: TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
+                      style:
+                          TextStyle(fontWeight: FontWeight.w800, fontSize: 16),
                     ),
                   ),
                 ),
@@ -1090,7 +1198,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       }
 
       final dir = await getTemporaryDirectory();
-      final outPath = '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
+      final outPath =
+          '${dir.path}/voice_${DateTime.now().millisecondsSinceEpoch}.m4a';
       await _recorder.start(
         const RecordConfig(encoder: AudioEncoder.aacLc, numChannels: 1),
         path: outPath,
@@ -1104,7 +1213,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
     }
   }
 
-  Future<void> _uploadAndApplyVoice(List<int> audioBytes, {required String mimeType}) async {
+  Future<void> _uploadAndApplyVoice(List<int> audioBytes,
+      {required String mimeType}) async {
     try {
       final uri = Uri.parse('${WishlistStore.apiBase}/api/voice/ingest')
           .replace(queryParameters: {'api_key': WishlistStore.apiKey});
@@ -1123,7 +1233,8 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       final body = await resp.stream.bytesToString();
       if (resp.statusCode != 200) return;
       final data = jsonDecode(body) as Map<String, dynamic>;
-      final extracted = (data['extracted'] as Map?)?.cast<String, dynamic>() ?? <String, dynamic>{};
+      final extracted = (data['extracted'] as Map?)?.cast<String, dynamic>() ??
+          <String, dynamic>{};
       wishlistStore.addItemsFromExtracted(extracted);
     } catch (_) {
       return;
@@ -1139,174 +1250,176 @@ class _DiscoverScreenState extends State<DiscoverScreen>
       children: [
         CustomScrollView(
           slivers: [
-        SliverPadding(
-          padding: EdgeInsets.fromLTRB(
-            horizontalPadding,
-            12,
-            horizontalPadding,
-            8,
-          ),
-          sliver: SliverToBoxAdapter(
-            child: Row(
-              children: [
-                Expanded(
-                  child: Text(
-                    'Wähle deine Lieferzeit ›',
-                    style: theme.textTheme.bodySmall?.copyWith(
-                      color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.w700,
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                12,
+                horizontalPadding,
+                8,
+              ),
+              sliver: SliverToBoxAdapter(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'Wähle deine Lieferzeit ›',
+                        style: theme.textTheme.bodySmall?.copyWith(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
                     ),
-                  ),
+                    IconButton(
+                      onPressed: _toggleRecord,
+                      icon: Icon(
+                          _isRecording ? Icons.stop_circle : Icons.graphic_eq),
+                      tooltip: _isRecording ? 'Stop recording' : 'Voice input',
+                    ),
+                    IconButton(
+                      onPressed: () {},
+                      icon: const Icon(Icons.person_outline),
+                    ),
+                  ],
                 ),
-                IconButton(
-                  onPressed: _toggleRecord,
-                  icon: Icon(_isRecording ? Icons.stop_circle : Icons.graphic_eq),
-                  tooltip: _isRecording ? 'Stop recording' : 'Voice input',
-                ),
-                IconButton(
-                  onPressed: () {},
-                  icon: const Icon(Icons.person_outline),
-                ),
-              ],
-            ),
-          ),
-        ),
-        SliverToBoxAdapter(
-          child: SizedBox(
-            height: 210,
-            child: PageView(
-              controller: PageController(viewportFraction: 0.92),
-              children: const [
-                _HeroCard(
-                  title: 'Klick, Klick, Grillglück',
-                  subtitle: 'Alles was du brauchst an einem Ort',
-                  imagePath: 'assets/foods/grill.jpg',
-                ),
-                _HeroCard(
-                  title: 'Hereinschauen im Markthallen',
-                  subtitle: 'Das Beste von heute',
-                  imagePath: 'assets/foods/rice_bowl.jpg',
-                ),
-              ],
-            ),
-          ),
-        ),
-        SliverPadding(
-          padding: EdgeInsets.fromLTRB(
-            horizontalPadding,
-            14,
-            horizontalPadding,
-            10,
-          ),
-          sliver: SliverToBoxAdapter(
-            child: _WelcomeCard(
-              onSmartBasket: () {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                    builder: (_) => const SmartBasketReviewScreen(),
-                  ),
-                );
-              },
-            ),
-          ),
-        ),
-        SliverPadding(
-          padding: EdgeInsets.fromLTRB(
-            horizontalPadding,
-            0,
-            horizontalPadding,
-            8,
-          ),
-          sliver: SliverToBoxAdapter(
-            child: Text(
-              'Diese gratis Produkte warten auf dich',
-              style: theme.textTheme.titleMedium,
-            ),
-          ),
-        ),
-        SliverPadding(
-          padding: EdgeInsets.fromLTRB(
-            horizontalPadding,
-            0,
-            horizontalPadding,
-            18,
-          ),
-          sliver: SliverToBoxAdapter(
-            child: SizedBox(
-              height: 112,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: 3,
-                separatorBuilder: (_, __) => const SizedBox(width: 10),
-                itemBuilder: (context, i) => _GiftCard(index: i + 1),
               ),
             ),
-          ),
-        ),
-        SliverPadding(
-          padding: EdgeInsets.fromLTRB(
-            horizontalPadding,
-            0,
-            horizontalPadding,
-            8,
-          ),
-          sliver: SliverToBoxAdapter(
-            child: Row(
-              children: [
-                Expanded(
-                  child: InkWell(
-                    onTap: widget.onGoToFavoriten,
-                    child: Text(
-                      'Bestellen Sie wieder ›',
-                      style: theme.textTheme.titleMedium,
+            SliverToBoxAdapter(
+              child: SizedBox(
+                height: 210,
+                child: PageView(
+                  controller: PageController(viewportFraction: 0.92),
+                  children: const [
+                    _HeroCard(
+                      title: 'Klick, Klick, Grillglück',
+                      subtitle: 'Alles was du brauchst an einem Ort',
+                      imagePath: 'assets/foods/grill.jpg',
                     ),
+                    _HeroCard(
+                      title: 'Hereinschauen im Markthallen',
+                      subtitle: 'Das Beste von heute',
+                      imagePath: 'assets/foods/rice_bowl.jpg',
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                14,
+                horizontalPadding,
+                10,
+              ),
+              sliver: SliverToBoxAdapter(
+                child: _WelcomeCard(
+                  onSmartBasket: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => const SmartBasketReviewScreen(),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                0,
+                horizontalPadding,
+                8,
+              ),
+              sliver: SliverToBoxAdapter(
+                child: Text(
+                  'Diese gratis Produkte warten auf dich',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                0,
+                horizontalPadding,
+                18,
+              ),
+              sliver: SliverToBoxAdapter(
+                child: SizedBox(
+                  height: 112,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: 3,
+                    separatorBuilder: (_, __) => const SizedBox(width: 10),
+                    itemBuilder: (context, i) => _GiftCard(index: i + 1),
                   ),
                 ),
-              ],
+              ),
             ),
-          ),
-        ),
-        SliverPadding(
-          padding: EdgeInsets.fromLTRB(
-            horizontalPadding,
-            0,
-            horizontalPadding,
-            24,
-          ),
-          sliver: SliverGrid.builder(
-            gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
-              mainAxisSpacing: 12,
-              crossAxisSpacing: 12,
-              childAspectRatio: 0.78,
-            ),
-            itemCount: foodCatalog.length,
-            itemBuilder: (context, idx) {
-              final item = foodCatalog[idx];
-              final bgColors = [
-                const Color(0xFFE7EEDD),
-                const Color(0xFFF1E1E1),
-                const Color(0xFFE9F0F7),
-                const Color(0xFFF7F0E2),
-              ];
-
-              return _ProductCard(
-                data: _ProductCardData(
-                  title: item.name,
-                  subtitle: item.description,
-                  price: item.price.toStringAsFixed(2),
-                  bg: bgColors[idx % bgColors.length],
-                  assetPath: item.assetPath,
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                0,
+                horizontalPadding,
+                8,
+              ),
+              sliver: SliverToBoxAdapter(
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: InkWell(
+                        onTap: widget.onGoToFavoriten,
+                        child: Text(
+                          'Bestellen Sie wieder ›',
+                          style: theme.textTheme.titleMedium,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
-                onAdd: () {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text('${item.name} hinzugefügt (demo)')),
+              ),
+            ),
+            SliverPadding(
+              padding: EdgeInsets.fromLTRB(
+                horizontalPadding,
+                0,
+                horizontalPadding,
+                24,
+              ),
+              sliver: SliverGrid.builder(
+                gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                  crossAxisCount: 2,
+                  mainAxisSpacing: 12,
+                  crossAxisSpacing: 12,
+                  childAspectRatio: 0.78,
+                ),
+                itemCount: foodCatalog.length,
+                itemBuilder: (context, idx) {
+                  final item = foodCatalog[idx];
+                  final bgColors = [
+                    const Color(0xFFE7EEDD),
+                    const Color(0xFFF1E1E1),
+                    const Color(0xFFE9F0F7),
+                    const Color(0xFFF7F0E2),
+                  ];
+
+                  return _ProductCard(
+                    data: _ProductCardData(
+                      title: item.name,
+                      subtitle: item.description,
+                      price: item.price.toStringAsFixed(2),
+                      bg: bgColors[idx % bgColors.length],
+                      assetPath: item.assetPath,
+                    ),
+                    onAdd: () {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(
+                            content: Text('${item.name} hinzugefügt (demo)')),
+                      );
+                    },
                   );
                 },
-              );
-            },
-          ),
-        ),
+              ),
+            ),
           ],
         ),
         // Full-screen overlay is handled by `PicnicShell` so it can cover
