@@ -90,7 +90,7 @@ class _ReorderScreenState extends State<ReorderScreen> {
         child: ListView.separated(
           padding: const EdgeInsets.only(bottom: 120),
           itemCount: _recommended.length,
-          separatorBuilder: (_, _) =>
+          separatorBuilder: (_, __) =>
               const Divider(height: 1, indent: 16, endIndent: 16),
           itemBuilder: (context, index) {
             final item = _recommended[index];
