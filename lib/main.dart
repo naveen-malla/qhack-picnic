@@ -844,7 +844,7 @@ class _GiftCard extends StatelessWidget {
   static const _backgroundImages = [
     'assets/foods/blue_icon.png',
     'assets/foods/pink_icon.png',
-    'assets/foods/yellow_iconexit.png',
+    'assets/foods/yellow_icon.png',
   ];
 
   @override
