@@ -16,6 +16,20 @@ class SocialIngredientLine {
   final String detail;
 }
 
+class SocialSaverKitItem {
+  const SocialSaverKitItem({
+    required this.name,
+    required this.detail,
+    required this.originalPrice,
+    required this.reducedPrice,
+  });
+
+  final String name;
+  final String detail;
+  final double originalPrice;
+  final double reducedPrice;
+}
+
 class SocialRecipePostData {
   const SocialRecipePostData({
     required this.authorName,
@@ -51,6 +65,7 @@ class SocialChallengePostData {
     required this.title,
     required this.description,
     required this.rewardLabel,
+    required this.saverItems,
     required this.participantCount,
     required this.likes,
     required this.communityImagePaths,
@@ -61,6 +76,7 @@ class SocialChallengePostData {
   final String title;
   final String description;
   final String rewardLabel;
+  final List<SocialSaverKitItem> saverItems;
   final int participantCount;
   final int likes;
   final List<String> communityImagePaths;
@@ -72,13 +88,13 @@ class SocialScreen extends StatefulWidget {
     required this.recipePost,
     required this.challengePost,
     required this.onAddRecipeItems,
-    required this.onAddChallengeStarterKit,
+    required this.onAddChallengeSaverKit,
   });
 
   final SocialRecipePostData recipePost;
   final SocialChallengePostData challengePost;
   final VoidCallback onAddRecipeItems;
-  final VoidCallback onAddChallengeStarterKit;
+  final VoidCallback onAddChallengeSaverKit;
 
   @override
   State<SocialScreen> createState() => _SocialScreenState();
@@ -86,6 +102,7 @@ class SocialScreen extends StatefulWidget {
 
 class _SocialScreenState extends State<SocialScreen> {
   bool _isRecipeFlipped = false;
+  bool _isChallengeFlipped = false;
   bool _joinedChallenge = false;
   late int _challengeParticipants;
 
@@ -136,10 +153,13 @@ class _SocialScreenState extends State<SocialScreen> {
         const SizedBox(height: 16),
         _ChallengePostCard(
           data: widget.challengePost,
+          isFlipped: _isChallengeFlipped,
           joined: _joinedChallenge,
           participantCount: _challengeParticipants,
+          onFlip: () =>
+              setState(() => _isChallengeFlipped = !_isChallengeFlipped),
           onToggleJoined: _toggleChallengeJoined,
-          onAddStarterKit: widget.onAddChallengeStarterKit,
+          onAddSaverKit: widget.onAddChallengeSaverKit,
         ),
       ],
     );
@@ -561,17 +581,21 @@ class _IngredientRow extends StatelessWidget {
 class _ChallengePostCard extends StatelessWidget {
   const _ChallengePostCard({
     required this.data,
+    required this.isFlipped,
     required this.joined,
     required this.participantCount,
+    required this.onFlip,
     required this.onToggleJoined,
-    required this.onAddStarterKit,
+    required this.onAddSaverKit,
   });
 
   final SocialChallengePostData data;
+  final bool isFlipped;
   final bool joined;
   final int participantCount;
+  final VoidCallback onFlip;
   final VoidCallback onToggleJoined;
-  final VoidCallback onAddStarterKit;
+  final VoidCallback onAddSaverKit;
 
   @override
   Widget build(BuildContext context) {
@@ -597,7 +621,7 @@ class _ChallengePostCard extends StatelessWidget {
                   radius: 22,
                   backgroundColor: Colors.white,
                   child: Icon(
-                    Icons.flag_rounded,
+                    Icons.storefront_rounded,
                     color: Color(0xFF3E7D2A),
                   ),
                 ),
@@ -626,95 +650,39 @@ class _ChallengePostCard extends StatelessWidget {
               ],
             ),
             const SizedBox(height: 16),
-            Container(
-              padding: const EdgeInsets.all(18),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.78),
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: Colors.white.withOpacity(0.95),
-                  width: 1.5,
-                ),
+            GestureDetector(
+              onTap: onFlip,
+              child: _ChallengeFlipPanel(
+                data: data,
+                isFlipped: isFlipped,
+                joined: joined,
+                participantCount: participantCount,
+                onToggleJoined: onToggleJoined,
+                onAddSaverKit: onAddSaverKit,
               ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.68),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: Row(
                 children: [
-                  Text(
-                    data.title,
-                    style: theme.textTheme.titleLarge?.copyWith(height: 1.0),
+                  const Icon(
+                    Icons.touch_app_rounded,
+                    size: 18,
+                    color: Color(0xFF6D645F),
                   ),
-                  const SizedBox(height: 8),
-                  Text(
-                    data.description,
-                    style: theme.textTheme.bodyMedium?.copyWith(
-                      color: const Color(0xFF5E5550),
-                      height: 1.35,
+                  const SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Tippe auf die Karte, um Vorder- und Rückseite zu wechseln.',
+                      style: theme.textTheme.bodySmall?.copyWith(
+                        color: const Color(0xFF5E5550),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: _ChallengeInfoPill(
-                          icon: Icons.local_fire_department_outlined,
-                          label: '$participantCount machen schon mit',
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: _ChallengeInfoPill(
-                          icon: Icons.card_giftcard_rounded,
-                          label: data.rewardLabel,
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 16),
-                  Row(
-                    children: [
-                      Expanded(
-                        child: FilledButton(
-                          key: const Key('socialChallengeJoinButton'),
-                          onPressed: onToggleJoined,
-                          style: FilledButton.styleFrom(
-                            backgroundColor: joined
-                                ? const Color(0xFF3E7D2A)
-                                : const Color(0xFFE53935),
-                            foregroundColor: Colors.white,
-                            minimumSize: const Size.fromHeight(50),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                          ),
-                          child: Text(
-                            joined ? 'Du bist dabei' : 'Ich bin dabei',
-                            style: const TextStyle(fontWeight: FontWeight.w800),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: OutlinedButton.icon(
-                          key: const Key('socialChallengeCartButton'),
-                          onPressed: onAddStarterKit,
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: const Color(0xFF3E7D2A),
-                            minimumSize: const Size.fromHeight(50),
-                            side: const BorderSide(
-                              color: Color(0xFFB5CEA1),
-                            ),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(18),
-                            ),
-                          ),
-                          icon: const Icon(Icons.shopping_basket_outlined),
-                          label: const Text(
-                            'Starter-Kit',
-                            style: TextStyle(fontWeight: FontWeight.w700),
-                          ),
-                        ),
-                      ),
-                    ],
                   ),
                 ],
               ),
@@ -740,6 +708,348 @@ class _ChallengePostCard extends StatelessWidget {
       ),
     );
   }
+}
+
+class _ChallengeFlipPanel extends StatelessWidget {
+  const _ChallengeFlipPanel({
+    required this.data,
+    required this.isFlipped,
+    required this.joined,
+    required this.participantCount,
+    required this.onToggleJoined,
+    required this.onAddSaverKit,
+  });
+
+  final SocialChallengePostData data;
+  final bool isFlipped;
+  final bool joined;
+  final int participantCount;
+  final VoidCallback onToggleJoined;
+  final VoidCallback onAddSaverKit;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 372,
+      child: TweenAnimationBuilder<double>(
+        tween: Tween<double>(end: isFlipped ? math.pi : 0),
+        duration: const Duration(milliseconds: 420),
+        curve: Curves.easeInOut,
+        builder: (context, value, _) {
+          final isBackVisible = value > (math.pi / 2);
+          final rotation = isBackVisible ? value - math.pi : value;
+
+          return Transform(
+            alignment: Alignment.center,
+            transform: Matrix4.identity()
+              ..setEntry(3, 2, 0.001)
+              ..rotateY(rotation),
+            child: isBackVisible
+                ? _ChallengeBackFace(
+                    data: data,
+                    onAddSaverKit: onAddSaverKit,
+                  )
+                : _ChallengeFrontFace(
+                    data: data,
+                    joined: joined,
+                    participantCount: participantCount,
+                    onToggleJoined: onToggleJoined,
+                    onAddSaverKit: onAddSaverKit,
+                  ),
+          );
+        },
+      ),
+    );
+  }
+}
+
+class _ChallengeFrontFace extends StatelessWidget {
+  const _ChallengeFrontFace({
+    required this.data,
+    required this.joined,
+    required this.participantCount,
+    required this.onToggleJoined,
+    required this.onAddSaverKit,
+  });
+
+  final SocialChallengePostData data;
+  final bool joined;
+  final int participantCount;
+  final VoidCallback onToggleJoined;
+  final VoidCallback onAddSaverKit;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.all(18),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.78),
+        borderRadius: BorderRadius.circular(24),
+        border: Border.all(
+          color: Colors.white.withOpacity(0.95),
+          width: 1.5,
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            data.title,
+            style: theme.textTheme.titleLarge?.copyWith(height: 1.0),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            data.description,
+            style: theme.textTheme.bodyMedium?.copyWith(
+              color: const Color(0xFF5E5550),
+              height: 1.35,
+            ),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            children: [
+              Expanded(
+                child: _ChallengeInfoPill(
+                  icon: Icons.local_fire_department_outlined,
+                  label: '$participantCount machen schon mit',
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: _ChallengeInfoPill(
+                  icon: Icons.card_giftcard_rounded,
+                  label: data.rewardLabel,
+                ),
+              ),
+            ],
+          ),
+          const Spacer(),
+          Row(
+            children: [
+              Expanded(
+                child: FilledButton(
+                  key: const Key('socialChallengeJoinButton'),
+                  onPressed: onToggleJoined,
+                  style: FilledButton.styleFrom(
+                    backgroundColor: joined
+                        ? const Color(0xFF3E7D2A)
+                        : const Color(0xFFE53935),
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(50),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                  ),
+                  child: Text(
+                    joined ? 'Du bist dabei' : 'Ich bin dabei',
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: OutlinedButton.icon(
+                  key: const Key('socialChallengeCartButton'),
+                  onPressed: onAddSaverKit,
+                  style: OutlinedButton.styleFrom(
+                    foregroundColor: const Color(0xFF3E7D2A),
+                    minimumSize: const Size.fromHeight(50),
+                    side: const BorderSide(
+                      color: Color(0xFFB5CEA1),
+                    ),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                  ),
+                  icon: const Icon(Icons.shopping_basket_outlined),
+                  label: const Text(
+                    'Saver-Kit',
+                    style: TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ChallengeBackFace extends StatelessWidget {
+  const _ChallengeBackFace({
+    required this.data,
+    required this.onAddSaverKit,
+  });
+
+  final SocialChallengePostData data;
+  final VoidCallback onAddSaverKit;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4EDE6),
+        borderRadius: BorderRadius.circular(24),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.shopping_basket_rounded,
+                color: Color(0xFF3E7D2A),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Im Saver-Kit',
+                  style: theme.textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFE7F1DC),
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '20% reduziert',
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF3E7D2A),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          for (final saverItem in data.saverItems) ...[
+            _SaverKitRow(item: saverItem),
+            const SizedBox(height: 10),
+          ],
+          const Spacer(),
+          FilledButton(
+            key: const Key('socialChallengeSaverKitAddButton'),
+            onPressed: onAddSaverKit,
+            style: FilledButton.styleFrom(
+              backgroundColor: const Color(0xFF3E7D2A),
+              foregroundColor: Colors.white,
+              minimumSize: const Size.fromHeight(46),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16),
+              ),
+            ),
+            child: const Text(
+              'Saver-Kit hinzufügen',
+              style: TextStyle(fontWeight: FontWeight.w800),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Reduzierte Preise werden direkt im Warenkorb übernommen.',
+            style: theme.textTheme.bodySmall?.copyWith(
+              color: const Color(0xFF6D645F),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SaverKitRow extends StatelessWidget {
+  const _SaverKitRow({required this.item});
+
+  final SocialSaverKitItem item;
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(18),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 32,
+            height: 32,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: const Color(0xFFEAF2DE),
+              borderRadius: BorderRadius.circular(999),
+            ),
+            child: const Text(
+              '1',
+              style: TextStyle(
+                fontWeight: FontWeight.w800,
+                color: Color(0xFF3E7D2A),
+              ),
+            ),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  item.name,
+                  style: theme.textTheme.bodyMedium?.copyWith(
+                    color: const Color(0xFF2E2A27),
+                    fontWeight: FontWeight.w800,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  item.detail,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: const Color(0xFF6D645F),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 12),
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '€ ${_formatSocialEuro(item.originalPrice)}',
+                style: theme.textTheme.bodySmall?.copyWith(
+                  color: const Color(0xFF8A817B),
+                  decoration: TextDecoration.lineThrough,
+                ),
+              ),
+              Text(
+                '€ ${_formatSocialEuro(item.reducedPrice)}',
+                style: theme.textTheme.bodyMedium?.copyWith(
+                  color: const Color(0xFF3E7D2A),
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+String _formatSocialEuro(double value) {
+  return value.toStringAsFixed(2).replaceAll('.', ',');
 }
 
 class _MetricCard extends StatelessWidget {

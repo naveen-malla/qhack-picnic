@@ -28,6 +28,10 @@ String _formatEuro(double v) {
   return v.toStringAsFixed(2).replaceAll('.', ',');
 }
 
+double _discountedPrice(double v, {double factor = 0.8}) {
+  return ((v * factor) * 100).round() / 100.0;
+}
+
 String _normalizeItemName(String s) {
   final t = s.trim().toLowerCase();
   if (t.isEmpty) return '';
@@ -84,6 +88,7 @@ class WishlistStore extends ChangeNotifier {
       String.fromEnvironment('WISHLIST_API_KEY', defaultValue: 'dev-token');
 
   final Map<String, int> qtyById = {};
+  final Map<String, double> effectivePriceById = {};
   Timer? _pollTimer;
   bool _polling = false;
   bool _busy = false;
@@ -103,15 +108,18 @@ class WishlistStore extends ChangeNotifier {
 
   void clear() {
     qtyById.clear();
+    effectivePriceById.clear();
     notifyListeners();
+  }
+
+  double unitPriceFor(String id) {
+    return effectivePriceById[id] ?? (catalogById(id)?.price ?? 0.0);
   }
 
   double get totalCost {
     var total = 0.0;
     for (final e in qtyById.entries) {
-      final item = catalogById(e.key);
-      if (item == null) continue;
-      total += item.price * e.value;
+      total += unitPriceFor(e.key) * e.value;
     }
     return total;
   }
@@ -119,7 +127,9 @@ class WishlistStore extends ChangeNotifier {
   void setQty(String id, int qty) {
     final next = qty.clamp(0, 9999);
     if (next <= 0) {
-      if (qtyById.remove(id) != null) notifyListeners();
+      final removedQty = qtyById.remove(id);
+      effectivePriceById.remove(id);
+      if (removedQty != null) notifyListeners();
       return;
     }
     if (qtyById[id] == next) return;
@@ -127,7 +137,10 @@ class WishlistStore extends ChangeNotifier {
     notifyListeners();
   }
 
-  void inc(String id, {int by = 1}) {
+  void inc(String id, {int by = 1, double? unitPrice}) {
+    if (unitPrice != null) {
+      effectivePriceById[id] = unitPrice;
+    }
     setQty(id, (qtyById[id] ?? 0) + (by <= 0 ? 1 : by));
   }
 
@@ -447,9 +460,13 @@ class _PicnicShellState extends State<PicnicShell> with WidgetsBindingObserver {
     BuildContext context,
     List<FoodItem> items, {
     required String label,
+    bool discounted = false,
   }) {
     for (final item in items) {
-      wishlistStore.inc(item.id);
+      wishlistStore.inc(
+        item.id,
+        unitPrice: discounted ? _discountedPrice(item.price) : null,
+      );
     }
 
     ScaffoldMessenger.of(context)
@@ -509,7 +526,7 @@ class _PicnicShellState extends State<PicnicShell> with WidgetsBindingObserver {
     final zucchini = _food('zucchini');
     final cucumber = _food('salatgurke');
     final recipeItems = <FoodItem>[rice, tomatoes, zucchini];
-    final challengeStarterKit = <FoodItem>[cucumber, tomatoes, zucchini];
+    final challengeSaverKit = <FoodItem>[cucumber, tomatoes, zucchini];
 
     final pages = <Widget>[
       DiscoverScreen(onGoToFavoriten: _goToFavoriten),
@@ -549,13 +566,33 @@ class _PicnicShellState extends State<PicnicShell> with WidgetsBindingObserver {
           tipLabel:
               'Tippe auf das Bild, um die Zutatenliste wie eine Karte umzudrehen.',
         ),
-        challengePost: const SocialChallengePostData(
-          authorName: 'Sarah L.',
+        challengePost: SocialChallengePostData(
+          authorName: 'Picnic',
           authorSubtitle: 'hat die Wochen-Challenge gestartet',
-          title: '3 saisonale Gemüse bis Sonntag',
+          title: '3 Gemüse mit kurzer Restlaufzeit retten',
           description:
-              'Hol dir das Starter-Kit, koche etwas Frisches und bring beim nächsten Picnic-Abend ein buntes Gericht mit.',
-          rewardLabel: 'Bonus-Los fur die Verlosung',
+              'Hol dir das Saver-Kit mit sorgfältig ausgewählten Produkten kurz vor Ablauf: gut für gerettetes Gemüse, gut für deinen Geldbeutel.',
+          rewardLabel: 'Bonus-Los für die Verlosung',
+          saverItems: [
+            SocialSaverKitItem(
+              name: cucumber.name,
+              detail: '1 x Stück',
+              originalPrice: cucumber.price,
+              reducedPrice: _discountedPrice(cucumber.price),
+            ),
+            SocialSaverKitItem(
+              name: tomatoes.name,
+              detail: '1 x 400 g Dose',
+              originalPrice: tomatoes.price,
+              reducedPrice: _discountedPrice(tomatoes.price),
+            ),
+            SocialSaverKitItem(
+              name: zucchini.name,
+              detail: '1 x Stück',
+              originalPrice: zucchini.price,
+              reducedPrice: _discountedPrice(zucchini.price),
+            ),
+          ],
           participantCount: 33,
           likes: 12,
           communityImagePaths: [
@@ -569,10 +606,11 @@ class _PicnicShellState extends State<PicnicShell> with WidgetsBindingObserver {
           recipeItems,
           label: 'Tomaten-Reis-Bowl',
         ),
-        onAddChallengeStarterKit: () => _addItemsToBasket(
+        onAddChallengeSaverKit: () => _addItemsToBasket(
           context,
-          challengeStarterKit,
-          label: 'Challenge Starter-Kit',
+          challengeSaverKit,
+          label: 'Challenge Saver-Kit',
+          discounted: true,
         ),
       ),
       const BasketWishlistScreen(),
@@ -723,11 +761,7 @@ class _BasketWishlistScreenState extends State<BasketWishlistScreen> {
   Widget build(BuildContext context) {
     final entries = wishlistStore.qtyById.entries.toList()
       ..sort((a, b) => a.key.compareTo(b.key));
-    final total = entries.fold<double>(0.0, (sum, e) {
-      final item = catalogById(e.key);
-      if (item == null) return sum;
-      return sum + item.price * e.value;
-    });
+    final total = wishlistStore.totalCost;
     final bottomInset = MediaQuery.of(context).padding.bottom;
 
     return Column(
@@ -779,7 +813,9 @@ class _BasketWishlistScreenState extends State<BasketWishlistScreen> {
                   final item = catalogById(e.key);
                   if (item == null) return const SizedBox.shrink();
                   final qty = e.value;
-                  final lineTotal = item.price * qty;
+                  final unitPrice = wishlistStore.unitPriceFor(item.id);
+                  final lineTotal = unitPrice * qty;
+                  final hasDiscount = unitPrice < (item.price - 0.001);
 
                   return Container(
                     color: Colors.white,
@@ -820,6 +856,17 @@ class _BasketWishlistScreenState extends State<BasketWishlistScreen> {
                                   fontSize: 12,
                                 ),
                               ),
+                              if (hasDiscount) ...[
+                                const SizedBox(height: 4),
+                                Text(
+                                  'Jetzt € ${_formatEuro(unitPrice)} statt € ${_formatEuro(item.price)}',
+                                  style: const TextStyle(
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF3E7D2A),
+                                    fontSize: 12,
+                                  ),
+                                ),
+                              ],
                             ],
                           ),
                         ),
